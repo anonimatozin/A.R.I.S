@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/*.log
+logs/*.log.*
+
+# Data
+data/*.json
+data/*.db
+data/*.sqlite
+
+# Tests
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Assets (binários)
+assets/*.png
+assets/*.jpg
+assets/*.gif
+assets/*.ico

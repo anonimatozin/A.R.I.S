@@ -1,7 +1,7 @@
-"""Hyper Search Engine do J.A.R.V.I.S. NEXUS.
+"""Hyper Search Engine do J.A.R.V.I.S.
 
 Sistema de pesquisa inteligente multi-fonte.
-Consulta múltiplas fontes, compara e consolida resultados.
+Consulta multiplas fontes, compara e consolida resultados.
 """
 
 import json
@@ -9,6 +9,8 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 from urllib.parse import quote_plus
 from dataclasses import dataclass
+
+from core.rate_limiter import serpapi_limiter
 
 
 @dataclass
@@ -48,6 +50,14 @@ class HyperSearch:
         key = self._api_keys.get("serpapi")
         if not key:
             return []
+
+        if not serpapi_limiter.allow():
+            return [SearchResult(
+                source="SerpAPI",
+                title="Rate limit atingido",
+                snippet=f"Tente novamente em alguns segundos. Quota: {serpapi_limiter.remaining}/{serpapi_limiter.max_calls}",
+                url="",
+            )]
 
         try:
             url = (

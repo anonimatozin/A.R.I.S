@@ -1,7 +1,7 @@
-"""Hyper Weather System do J.A.R.V.I.S. NEXUS.
+"""Hyper Weather System do J.A.R.V.I.S.
 
-Sistema de previsão do tempo multi-fonte.
-Combina dados de múltiplas APIs meteorológicas.
+Sistema de previsao do tempo multi-fonte.
+Combina dados de multiplas APIs meteorologicas.
 """
 
 import json

@@ -1,1 +1,1 @@
-"""Security do J.A.R.V.I.S. NEXUS."""
+"""Security do J.A.R.V.I.S."""

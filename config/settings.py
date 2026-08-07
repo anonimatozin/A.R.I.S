@@ -33,7 +33,7 @@ class Settings:
     """
 
     PROJECT_NAME: str = "J.A.R.V.I.S."
-    VERSION: str = "0.1.0"
+    VERSION: str = "1.0.0"
 
     BASE_DIR: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
     LOG_DIR: Path = field(init=False)
@@ -47,8 +47,14 @@ class Settings:
     VOICE_RATE: int = field(init=False)
     VOICE_VOLUME: int = field(init=False)
     GROQ_API_KEY: str = field(init=False)
+    GEMINI_API_KEY: str = field(init=False)
     CHAT_MODEL: str = field(init=False)
     MEMORY_ROOT: Path = field(init=False)
+    SCHEDULER_DIR: Path = field(init=False)
+    SAFETY_PASSWORD: str = field(init=False)
+    ESP32_ENABLED: bool = field(init=False)
+    ESP32_WS_PORT: int = field(init=False)
+    ESP32_SIMULATION: bool = field(init=False)
 
     def __post_init__(self) -> None:
         """Inicializa valores derivados e carrega variáveis de ambiente."""
@@ -63,8 +69,14 @@ class Settings:
         object.__setattr__(self, "VOICE_RATE", int(os.getenv("JARVIS_VOICE_RATE", "0")))
         object.__setattr__(self, "VOICE_VOLUME", int(os.getenv("JARVIS_VOICE_VOLUME", "100")))
         object.__setattr__(self, "GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
+        object.__setattr__(self, "GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
         object.__setattr__(self, "CHAT_MODEL", os.getenv("JARVIS_CHAT_MODEL", "llama-3.3-70b-versatile"))
         object.__setattr__(self, "MEMORY_ROOT", Path(os.getenv("JARVIS_MEMORY_ROOT", "E:\\JARVIS_MEMORY")))
+        object.__setattr__(self, "SCHEDULER_DIR", self.DATA_DIR)
+        object.__setattr__(self, "SAFETY_PASSWORD", os.getenv("JARVIS_SAFETY_PASSWORD", ""))
+        object.__setattr__(self, "ESP32_ENABLED", os.getenv("ESP32_ENABLED", "true").lower() == "true")
+        object.__setattr__(self, "ESP32_WS_PORT", int(os.getenv("ESP32_WS_PORT", "8766")))
+        object.__setattr__(self, "ESP32_SIMULATION", os.getenv("HARDWARE_SIMULATION", "false").lower() == "true")
 
     def ensure_directories(self) -> None:
         """Cria os diretórios necessários se não existirem."""

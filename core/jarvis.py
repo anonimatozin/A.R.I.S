@@ -7,23 +7,45 @@ comandos e a interface do terminal.
 import signal
 import sys
 import os
+import concurrent.futures
 from pathlib import Path
 
 from config.settings import Settings
+from config.esp32_config import ESP32Config
 from core.module_manager import ModuleManager
 from core.intent import IntentAnalyzer, Intent
+from core.advanced_interpreter import AdvancedInterpreter
+from core.commands import registry
+import core.handlers  # noqa: F401 — auto-registra todos os handlers
 from core.memory import MemoryManager
 from core.memory_organizer import MemoryOrganizer
 from core.memory_models import MemoryCategory, Priority
+from core.multi_provider import MultiProviderChat
 from modules.chat import Chat
+from modules.desktop_tools import DesktopTools
+from modules.scheduler import Scheduler, TaskPriority
+from modules.notifications import NotificationManager
+from modules.context_detector import ContextDetector
+from modules.safety import SafetyManager
+from modules.entertainment import Entertainment
+from modules.turbo_mode import TurboMode
+from modules.knowledge_graph import KnowledgeGraph
+from modules.desktop_awareness import DesktopAwareness
+from modules.auto_redaction import AutoRedaction
+from modules.morning_digest import MorningDigest
+from modules.browser_automation import BrowserAutomation
+from modules.multi_agent import MultiAgentSystem
+from modules.skills_system import SkillsSystem
+from modules.dictation_mode import DictationMode
+from modules.esp32_hardware import HardwareManager, SystemState
 from system.analyzer import PersonalAnalyzer
-from hud.display import HUD
-from hud.settings_menu import SettingsMenu
+
 from weather.hyper_weather import HyperWeather
 from search.hyper_search import HyperSearch
 from utils.logger import Logger
-from utils.terminal import Terminal
+from utils.terminal import Terminal, JarvisUI
 from utils.voice import Voice
+from utils.voice_hybrid import HybridVoice
 
 
 class Jarvis:
@@ -56,10 +78,17 @@ class Jarvis:
             volume=self._settings.VOICE_VOLUME,
         )
 
+        self._hybrid_voice = HybridVoice(
+            rate=self._settings.VOICE_RATE,
+            volume=self._settings.VOICE_VOLUME,
+        )
+
         self._memory = MemoryManager(
             logger=self._logger,
             memory_root=self._settings.MEMORY_ROOT,
         )
+
+        self._multi_chat = MultiProviderChat(logger=self._logger)
 
         self._chat = Chat(
             api_key=self._settings.GROQ_API_KEY,
@@ -74,7 +103,6 @@ class Jarvis:
         )
 
         self._analyzer = PersonalAnalyzer()
-        self._hud = HUD(analyzer=self._analyzer)
         self._weather = HyperWeather(api_keys={
             "openweather": os.getenv("OPENWEATHER_API_KEY", ""),
             "weatherapi": os.getenv("WEATHERAPI_KEY", ""),
@@ -84,6 +112,34 @@ class Jarvis:
         })
 
         self._intent = IntentAnalyzer()
+        self._interpreter = AdvancedInterpreter()
+
+        # Novos módulos
+        self._desktop = DesktopTools()
+        self._scheduler = Scheduler(data_dir=self._settings.DATA_DIR)
+        self._notifications = NotificationManager(data_dir=self._settings.DATA_DIR)
+        self._context = ContextDetector()
+        self._safety = SafetyManager(data_dir=self._settings.DATA_DIR)
+        self._entertainment = Entertainment(data_dir=self._settings.DATA_DIR)
+        self._turbo = TurboMode(logger=self._logger)
+        self._knowledge = KnowledgeGraph(data_dir=self._settings.DATA_DIR)
+        self._awareness = DesktopAwareness(data_dir=self._settings.DATA_DIR)
+        self._redaction = AutoRedaction()
+        self._digest = MorningDigest(data_dir=self._settings.DATA_DIR)
+        self._browser = BrowserAutomation(data_dir=self._settings.DATA_DIR)
+        self._agents = MultiAgentSystem(data_dir=self._settings.DATA_DIR)
+        self._skills = SkillsSystem(data_dir=self._settings.DATA_DIR)
+        self._dictation = DictationMode()
+
+        # Hardware ESP32
+        self._esp32_config = ESP32Config()
+        self._hardware = HardwareManager(config=self._esp32_config, logger=self._logger)
+
+        if self._settings.SAFETY_PASSWORD:
+            self._safety.set_master_password(self._settings.SAFETY_PASSWORD)
+
+        # Conectar safety ao registry
+        registry.set_safety(self._safety)
 
         self._running = False
         self._setup_signal_handlers()
@@ -99,140 +155,87 @@ class Jarvis:
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, signal_handler)
 
+    def _build_handler_context(self) -> dict:
+        """Constrói o contexto com todas as instâncias de módulos para os handlers."""
+        ctx = {
+            "weather": self._weather,
+            "search": self._search,
+            "analyzer": self._analyzer,
+            "desktop": self._desktop,
+            "scheduler": self._scheduler,
+            "notifications": self._notifications,
+            "context": self._context,
+            "safety": self._safety,
+            "entertainment": self._entertainment,
+            "turbo": self._turbo,
+            "knowledge": self._knowledge,
+            "awareness": self._awareness,
+            "redaction": self._redaction,
+            "digest": self._digest,
+            "browser": self._browser,
+            "agents": self._agents,
+            "skills": self._skills,
+            "dictation": self._dictation,
+            "memory": self._memory,
+            "voice": self._voice,
+            "settings": self._settings,
+            "hardware": self._hardware,
+        }
+
+        # Dados pré-computados para handlers que precisam
+        try:
+            ctx["weather_report"] = self._weather.format_report("São Paulo")
+        except Exception:
+            ctx["weather_report"] = ""
+        try:
+            ctx["tasks_report"] = self._scheduler.format_task_list(self._scheduler.list_tasks())
+        except Exception:
+            ctx["tasks_report"] = ""
+        try:
+            ctx["system_report"] = f"CPU: {self._analyzer.cpu_usage():.1f}%"
+        except Exception:
+            ctx["system_report"] = ""
+
+        return ctx
+
     def _execute_intent(self, intent: Intent) -> None:
         """Executa uma intenção detectada pela IA.
 
-        Args:
-            intent: Intenção a ser executada.
+        Delega para o CommandRegistry. Se o handler não existe,
+        cai no fallback legacy.
         """
         module = intent.module
         params = intent.params
 
-        if module == "weather":
-            city = params.get("city", "")
-            if city:
-                report = self._weather.format_report(city)
-                print()
-                for line in report.split("\n"):
-                    print(f"  {line}")
-                print()
+        JarvisUI.show_action(module, intent.action, params)
 
-        elif module == "websearch":
-            query = params.get("query", "")
-            if query:
-                result = self._search.search_and_summarize(query)
-                print()
-                for line in result.split("\n"):
-                    print(f"  {line}")
-                print()
-
-        elif module == "sys":
-            report = self._analyzer.get_full_report()
-            Terminal.print_separator()
-            Terminal.print_centered("ANÁLISE DO SISTEMA")
-            Terminal.print_separator()
-            cpu = report["cpu"]
-            print(f"  CPU: {cpu['cores_physical']}C/{cpu['cores_logical']}T @ {cpu['frequency_mhz']:.0f}MHz")
-            print(f"       Uso: {Terminal.colorize(str(cpu['usage_percent']) + '%', Terminal.CYAN)}")
-            mem = report["memory"]
-            print(f"  RAM: {mem['used_gb']:.1f}GB / {mem['total_gb']:.1f}GB ({mem['percent']}%)")
-            disk = report["disk"]
-            print(f"  Disco: {disk['used_gb']:.1f}GB / {disk['total_gb']:.1f}GB ({disk['percent']}%)")
-            net = report["network"]
-            print(f"  Rede: ↓{net['bytes_recv_gb']:.2f}GB ↑{net['bytes_sent_gb']:.2f}GB")
-            bat = report["battery"]
-            if bat["percent"] is not None:
-                print(f"  Bateria: {bat['percent']:.0f}% {'(carregando)' if bat['plugged'] else ''}")
-            print(f"  Processos: {report['processes']}")
-            print()
-            alerts = self._analyzer.diagnose()
-            for alert in alerts:
-                color = Terminal.RED if "CRÍTICO" in alert else Terminal.YELLOW if "AVISO" in alert else Terminal.GREEN
-                print(f"  {Terminal.colorize(alert, color)}")
-            Terminal.print_separator()
-
-        elif module == "hud":
-            self._hud.render()
-            Terminal.input_prompt("  Pressione Enter para voltar...")
-
-        elif module == "remember":
-            text = params.get("text", "")
-            if text:
-                importance = 5
-                category = MemoryCategory.KNOWLEDGE
-                tags = []
-                text_lower = text.lower()
-                if any(w in text_lower for w in ["meu nome", "me chamo", "sou o", "pode me chamar"]):
-                    category = MemoryCategory.PROFILE
-                    importance = 10
-                    tags = ["perfil", "pessoal"]
-                elif any(w in text_lower for w in ["projeto", "código", "script"]):
-                    category = MemoryCategory.PROJECTS
-                    importance = 8
-                    tags.append("projeto")
-                elif any(w in text_lower for w in ["dispositivo", "esp32", "arduino"]):
-                    category = MemoryCategory.DEVICES
-                    importance = 8
-                    tags.append("dispositivo")
-                elif any(w in text_lower for w in ["config", "configuração", "preferência"]):
-                    category = MemoryCategory.CONFIG
-                    importance = 10
-                    tags.append("configuração")
-                entry = self._memory.save(
-                    title=text[:50],
-                    content=text,
-                    category=category,
-                    importance=importance,
-                    tags=tags,
-                )
-                print(f"  Memória salva: {Terminal.colorize(entry.id, Terminal.CYAN)}")
-
-        elif module == "search":
-            query = params.get("query", "")
-            if query:
-                results = self._memory.search(query=query)
-                if not results:
-                    print("  Nenhuma memória encontrada.")
-                else:
-                    Terminal.print_separator()
-                    for entry in results:
-                        imp_color = Terminal.GREEN if entry.importance >= 7 else Terminal.YELLOW
-                        print(f"  [{Terminal.colorize(entry.id, Terminal.CYAN)}] {entry.title}")
-                        print(f"    {entry.category.value} | Imp: {Terminal.colorize(str(entry.importance), imp_color)}")
-                    Terminal.print_separator()
-
-        elif module == "config":
-            menu = SettingsMenu(env_path=self._settings.BASE_DIR / ".env")
-            menu.show()
-
-        elif module == "speak":
-            if self._voice.enabled:
-                self._voice.enabled = False
-                print("  Voz desativada.")
-            else:
-                self._voice.enabled = True
-                print("  Voz ativada.")
-
-        elif module == "exit":
+        # Comando de saída (sempre funciona)
+        if module == "exit":
             self.shutdown()
+            return
 
-    def _get_dynamic_prompt(self) -> str:
-        """Gera o prompt dinâmico com status do sistema."""
-        mem_count = self._memory.get_stats().get("total_memories", 0)
-        model_short = self._settings.CHAT_MODEL.split("/")[-1][:15]
-        return f"[{self._settings.VERSION} | {model_short} | {mem_count} mem] > "
+        # Tentar registry primeiro
+        if registry.has_intent(module):
+            ctx = self._build_handler_context()
+            result = registry.execute_intent(
+                module=module,
+                action=intent.action,
+                params=params,
+                **ctx,
+            )
+            return
+
+        # Fallback: módulos sem handler registrado ainda
+        self._execute_intent_legacy(intent)
+
+    def _execute_intent_legacy(self, intent: Intent) -> None:
+        """Fallback legado para módulos que ainda não foram migrados."""
+        module = intent.module
+        params = intent.params
 
     def _print_banner(self) -> None:
         """Exibe o banner inicial do sistema."""
-        Terminal.clear()
-        print(Terminal.colorize("╔" + "═" * 58 + "╗", Terminal.CYAN))
-        print(Terminal.colorize("║" + " J.A.R.V.I.S. NEXUS ".center(58) + "║", Terminal.CYAN))
-        print(Terminal.colorize("║" + " v" + self._settings.VERSION + " ".center(54) + "║", Terminal.CYAN))
-        print(Terminal.colorize("╠" + "═" * 58 + "╣", Terminal.CYAN))
-        print(Terminal.colorize("║" + " Todos os sistemas operacionais ".center(58) + "║", Terminal.CYAN))
-        print(Terminal.colorize("║" + " Pronto para receber comandos ".center(58) + "║", Terminal.CYAN))
-        print(Terminal.colorize("╚" + "═" * 58 + "╝", Terminal.CYAN))
-        print()
+        JarvisUI.show_banner(self._settings.VERSION)
 
     def start(self) -> None:
         """Inicia o J.A.R.V.I.S."""
@@ -241,22 +244,56 @@ class Jarvis:
         # Carregar módulos
         self._module_manager.load_modules()
 
+        # Configurar multi-provider com personalidade
+        from config.personality import JARVIS_PERSONALITY
+        self._multi_chat.set_system_prompt(JARVIS_PERSONALITY)
+
+        # Iniciar hardware ESP32
+        if self._esp32_config.enabled:
+            esp32_result = self._hardware.start()
+            self._logger.info(f"Hardware: {esp32_result}")
+
+            # Registrar callbacks do botão
+            self._hardware.register_button_action("voice_toggle", self._on_button_voice_toggle)
+            self._hardware.register_button_action("stop_speaking", self._on_button_stop_speaking)
+            self._hardware.register_button_action("turbo_mode", self._on_button_turbo_mode)
+            self._hardware.register_button_action("config_action", self._on_button_config)
+            self._hardware.register_button_action("reconnect", self._on_button_reconnect)
+
+            # Estado inicial
+            self._hardware.set_state(SystemState.IDLE)
+
+        # Iniciar scheduler em background
+        self._scheduler.start_checker(callback=self._on_task_due)
+
         # Exibir banner
         self._print_banner()
 
         # Saudação por voz
-        if self._voice.enabled:
-            self._voice.speak("J.A.R.V.I.S. inicializado. Todos os sistemas operacionais.")
+        voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
+        if voice.enabled:
+            voice.speak("J.A.R.V.I.S. inicializado. Todos os sistemas operacionais.")
+
+        # Status do provider
+        provider_status = self._multi_chat.get_status()
+        if provider_status["providers"]:
+            active = provider_status["current"]
+            print(f"  Provider ativo: {Terminal.colorize(active, Terminal.CYAN)}")
+        print()
 
         # Loop principal
         self._running = True
         self._logger.info("Sistema pronto para recebimento de comandos.")
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-llm")
 
         while self._running:
             try:
-                user_input = Terminal.input_prompt(
-                    prompt=self._get_dynamic_prompt(),
-                    color=Terminal.CYAN,
+                # Input moderno com status
+                user_input = JarvisUI.input_modern(
+                    version=self._settings.VERSION,
+                    provider=self._multi_chat.provider_name if self._multi_chat.available else "local",
+                    mem_count=self._memory.get_stats().get("total_memories", 0),
+                    task_count=self._scheduler.get_pending_count(),
                 )
 
                 if not user_input.strip():
@@ -267,27 +304,56 @@ class Jarvis:
                     self.shutdown()
                     break
 
+                # Comandos diretos do terminal
+                if user_input.strip().lower() in ("help", "ajuda", "comandos"):
+                    self._show_help()
+                    continue
+
                 # Enviar tudo para a IA interpretar
-                if self._chat.available:
-                    print()
+                chat = self._multi_chat if self._multi_chat.available else self._chat
+                if chat.available or (hasattr(chat, 'available') and chat.available):
+                    # Estado: processando
+                    self._sync_hardware_state(SystemState.THINKING)
 
-                    intent_prompt = self._intent.build_intent_prompt(user_input)
-                    response = self._chat.send(intent_prompt)
+                    # Usar interpretador avancado (multi-comando + contexto)
+                    intent_prompt = self._interpreter.build_interpretation_prompt(user_input)
 
-                    # Extrair intenções
-                    clean_response, intents = self._intent.parse_ai_response(response)
+                    # Executar LLM em thread separada com timeout (permite Ctrl+C)
+                    try:
+                        future = self._executor.submit(chat.send, intent_prompt)
+                        response = future.result(timeout=60.0)
+                    except concurrent.futures.TimeoutError:
+                        JarvisUI.show_error("Tempo limite excedido (60s). Tente novamente.")
+                        self._sync_hardware_state(SystemState.IDLE)
+                        continue
+                    except concurrent.futures.CancelledError:
+                        self._sync_hardware_state(SystemState.IDLE)
+                        continue
 
-                    # Executar intenções
+                    # Extrair intencoes (suporta multiplos comandos)
+                    clean_response, intents = self._interpreter.parse_ai_response(response)
+
+                    # Mostrar quantas acoes foram detectadas
+                    if len(intents) > 1:
+                        JarvisUI.show_actions_count(len(intents))
+
+                    # Executar todas as intencoes na ordem
                     for intent in intents:
                         self._execute_intent(intent)
 
-                    # Mostrar resposta
-                    if clean_response:
-                        print(f"  {Terminal.colorize('J.A.R.V.I.S.:', Terminal.GREEN)} {clean_response}")
-                        print()
+                    # Atualizar contexto da conversa
+                    self._interpreter.update_context(user_input, clean_response, intents)
 
-                    if self._voice.enabled and clean_response:
-                        self._voice.speak(clean_response)
+                    # Mostrar resposta formatada
+                    if clean_response:
+                        JarvisUI.show_response(clean_response)
+
+                    if voice.enabled and clean_response:
+                        self._sync_hardware_state(SystemState.SPEAKING)
+                        voice.speak(clean_response)
+
+                    # Estado: idle
+                    self._sync_hardware_state(SystemState.IDLE)
 
                     # Auto-salvar
                     if self._memory.should_save(user_input):
@@ -316,17 +382,162 @@ class Jarvis:
                             is_permanente=is_permanente,
                         )
                 else:
-                    print("Chat indisponível. Configure GROQ_API_KEY no .env.")
+                    JarvisUI.show_error("Chat indisponivel. Configure GROQ_API_KEY ou GEMINI_API_KEY no .env.")
 
             except KeyboardInterrupt:
-                print()
+                # Cancelar operação em andamento
+                print("\n  Operação cancelada.")
+                self._sync_hardware_state(SystemState.IDLE)
                 continue
             except EOFError:
                 break
 
         self.shutdown()
 
+    def _on_task_due(self, task) -> None:
+        """Callback chamado quando uma tarefa agendada e executada."""
+        self._notifications.notify(
+            title=f"Lembrete: {task.title}",
+            message=task.description or "Tarefa agendada",
+        )
+        print(f"\n  {Terminal.YELLOW}⏰ LEMBRETE:{Terminal.RESET} {Terminal.BOLD}{task.title}{Terminal.RESET}")
+        if task.description:
+            print(f"  {Terminal.DIM}{task.description}{Terminal.RESET}")
+
+        # Notificar ESP32
+        if self._hardware.connected:
+            self._hardware.set_state(SystemState.WARNING)
+
+    # ── Botão ESP32 callbacks ───────────────────────────────
+
+    def _on_button_voice_toggle(self) -> None:
+        """1 clique: ativar/desativar voz."""
+        if self._voice.enabled:
+            self._voice.enabled = False
+            print(f"\n  {Terminal.YELLOW}🎤 Voz desativada (botão ESP32){Terminal.RESET}")
+        else:
+            self._voice.enabled = True
+            print(f"\n  {Terminal.GREEN}🎤 Voz ativada (botão ESP32){Terminal.RESET}")
+
+    def _on_button_stop_speaking(self) -> None:
+        """2 cliques: interromper fala."""
+        if self._hybrid_voice and self._hybrid_voice.enabled:
+            self._hybrid_voice.stop()
+        elif self._voice.enabled:
+            self._voice.stop()
+        print(f"\n  {Terminal.YELLOW}⏹ Fala interrompida (botão ESP32){Terminal.RESET}")
+
+    def _on_button_turbo_mode(self) -> None:
+        """3 cliques: ativar/desativar modo turbo."""
+        if self._turbo.active:
+            result = self._turbo.deactivate()
+            print(f"\n  {Terminal.YELLOW}{result} (botão ESP32){Terminal.RESET}")
+        else:
+            result = self._turbo.activate()
+            print(f"\n  {Terminal.CYAN}{result} (botão ESP32){Terminal.RESET}")
+
+    def _on_button_config(self) -> None:
+        """4 cliques: ação configurável (mostrar status)."""
+        print(f"\n  {Terminal.CYAN}📊 Status do sistema (botão ESP32){Terminal.RESET}")
+        stats = self._memory.get_stats()
+        print(f"  Memórias: {stats.get('total_memories', 0)}")
+        print(f"  Tarefas: {self._scheduler.get_pending_count()}")
+        print(f"  Provider: {self._multi_chat.provider_name}")
+        print(f"  Hardware: {'Conectado' if self._hardware.connected else 'Desconectado'}")
+
+    def _on_button_reconnect(self) -> None:
+        """Long press: reconectar ESP32."""
+        print(f"\n  {Terminal.YELLOW}🔄 Reconectando ESP32...{Terminal.RESET}")
+        self._hardware.stop()
+        import time
+        time.sleep(1)
+        result = self._hardware.start()
+        print(f"  {result}")
+
+    # ── Estado visual → ESP32 ───────────────────────────────
+
+    def _sync_hardware_state(self, state: SystemState) -> None:
+        """Sincroniza estado do JARVIS com ESP32."""
+        if self._hardware.connected:
+            self._hardware.set_state(state)
+
+    def _show_help(self) -> None:
+        """Exibe ajuda com todos os comandos disponiveis."""
+        JarvisUI.show_help_header()
+
+        JarvisUI.show_help_section("Gerais", [
+            ("help / ajuda", "Mostra esta ajuda"),
+            ("exit / sair", "Encerra o sistema"),
+            ("config", "Abre configuracoes"),
+        ])
+
+        JarvisUI.show_help_section("OpenClaw + 20 Projetos", [
+            ("knowledge", "Grafo de conhecimento"),
+            ("awareness", "Captura de tela + OCR"),
+            ("redact", "Auto-redacao de dados"),
+            ("digest", "Briefing diario"),
+            ("browser", "Automacao web"),
+            ("agents", "Multi-agente"),
+            ("skills", "Sistema de skills"),
+            ("dictation", "Modo dictacao"),
+        ])
+
+        JarvisUI.show_help_section("Anteriores", [
+            ("desktop", "Controle do desktop"),
+            ("scheduler", "Agendamentos e pomodoro"),
+            ("notify", "Notificacao Windows"),
+            ("context", "Atividade atual"),
+            ("safety", "Seguranca"),
+            ("entertainment", "Piadas e jogos"),
+            ("turbo", "Analise profunda"),
+        ])
+
+        JarvisUI.show_help_section("Hardware", [
+            ("hardware", "Status do ESP32"),
+            ("hardware connect", "Conectar ESP32"),
+            ("hardware state [estado]", "Mudar estado visual"),
+            ("hardware led_left [r g b]", "LED esquerdo"),
+            ("hardware led_right [r g b]", "LED direito"),
+            ("hardware led_both [r g b]", "Ambos LEDs"),
+            ("hardware effect [target] [efeito]", "Aplicar efeito"),
+            ("hardware leds_off", "Desligar LEDs"),
+        ])
+
+        JarvisUI.show_help_section("Existentes", [
+            ("weather", "Previsao do tempo"),
+            ("websearch", "Pesquisa na web"),
+            ("sys", "Analise do sistema"),
+            ("remember", "Salvar memoria"),
+            ("search", "Buscar memoria"),
+            ("speak", "Ativar/desativar voz"),
+        ])
+
+        print()
+
+    def _get_dynamic_prompt(self) -> str:
+        """Gera o prompt dinâmico com status do sistema."""
+        mem_count = self._memory.get_stats().get("total_memories", 0)
+        provider = self._multi_chat.provider_name if self._multi_chat.available else "local"
+        scheduler_count = self._scheduler.get_pending_count()
+        context = self._context.format_context().split("\n")[0] if self._context else ""
+
+        parts = [self._settings.VERSION, provider, f"{mem_count} mem"]
+        if scheduler_count > 0:
+            parts.append(f"{scheduler_count} tarefas")
+
+        return f"[{' | '.join(parts)}] > "
+
     def shutdown(self) -> None:
         """Encerra o J.A.R.V.I.S. de forma limpa."""
         self._running = False
+
+        # Encerrar executor de threads
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
+
+        # Desligar ESP32
+        if self._hardware.connected:
+            self._hardware.set_state(SystemState.OFFLINE)
+            self._hardware.stop()
+
         self._logger.info("J.A.R.V.I.S. encerrado.")

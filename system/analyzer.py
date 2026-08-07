@@ -1,4 +1,4 @@
-"""Personal Analyzer - Monitor de Sistema do J.A.R.V.I.S. NEXUS.
+"""Personal Analyzer - Monitor de Sistema do J.A.R.V.I.S.
 
 Coleta e analisa dados do sistema operacional do operador.
 """

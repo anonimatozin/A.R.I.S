@@ -1,1 +1,1 @@
-"""Analytics do J.A.R.V.I.S. NEXUS."""
+"""Analytics do J.A.R.V.I.S."""

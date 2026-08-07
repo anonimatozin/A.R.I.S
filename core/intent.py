@@ -1,6 +1,6 @@
-"""Sistema de Interpretação de Intenção do J.A.R.V.I.S. NEXUS.
+"""Sistema de Interpretacao de Intencao do J.A.R.V.I.S.
 
-Analisa a mensagem do operador e extrai intenções para executar módulos.
+Analisa a mensagem do operador e extrai intencoes para executar modulos.
 """
 
 import json
@@ -56,13 +56,6 @@ class IntentAnalyzer:
             params=[],
         )
         self.register_module(
-            name="hud",
-            description="Painel de controle",
-            triggers=["painel", "dashboard", "hud", "centro de controle",
-                       "visão geral", "status geral"],
-            params=[],
-        )
-        self.register_module(
             name="remember",
             description="Salvar informação",
             triggers=["lembrar", "salvar", "anotar", "registrar",
@@ -82,6 +75,114 @@ class IntentAnalyzer:
             triggers=["configurar", "configurações", "settings", "ajustes",
                        "preferências", "mudar modelo", "mudar voz"],
             params=[],
+        )
+        # Novos módulos
+        self.register_module(
+            name="desktop",
+            description="Controle do desktop (mouse, teclado, mídia, janelas)",
+            triggers=["mouse", "teclado", "digitar", "volume", "mídia",
+                       "play", "pause", "próxima", "anterior", "screenshot",
+                       "tela", "janela", "clipboard", "abrir programa",
+                       "fechar programa", "minimizar"],
+            params=["action"],
+        )
+        self.register_module(
+            name="scheduler",
+            description="Agendamentos e lembretes",
+            triggers=["lembrete", "agendar", "lembrar", "horário", "pomodoro",
+                       "timer", "cronômetro", "tarefa agendada"],
+            params=["action", "title", "when"],
+        )
+        self.register_module(
+            name="notify",
+            description="Notificações Windows",
+            triggers=["notificação", "aviso", "alerta", "popup", "toast"],
+            params=["title", "message"],
+        )
+        self.register_module(
+            name="context",
+            description="Detectar contexto atual",
+            triggers=["o que estou fazendo", "atividade atual", "contexto",
+                       "produtividade", "o que está aberto"],
+            params=[],
+        )
+        self.register_module(
+            name="safety",
+            description="Relatório de segurança",
+            triggers=["segurança", "permissões", "audit", "safety"],
+            params=[],
+        )
+        self.register_module(
+            name="entertainment",
+            description="Entretenimento (piadas, curiosidades, jogos)",
+            triggers=["piada", "piadas", "engraçado", "curiosidade",
+                       "frase motivacional", "dado", "moeda", "bola 8",
+                       "adivinhar", "jogo", "card do dia"],
+            params=["action"],
+        )
+        self.register_module(
+            name="turbo",
+            description="Modo turbo (análise profunda de arquivos e código)",
+            triggers=["analisar arquivo", "analisar diretório", "code review",
+                       "revisão de código", "turbo", "análise profunda"],
+            params=["action", "path"],
+        )
+        # Módulos do OpenClaw e 20 projetos
+        self.register_module(
+            name="knowledge",
+            description="Grafo de conhecimento (entidades, fatos, relacionamentos)",
+            triggers=["entidade", "fato", "relacionamento", "conhecimento",
+                       "quem é", "relação", "grafo", "knowledge"],
+            params=["action", "name", "type", "content", "query"],
+        )
+        self.register_module(
+            name="awareness",
+            description="Desktop awareness (captura de tela, OCR, monitoramento)",
+            triggers=["tela", "captura", "ocr", "ler tela", "o que tem na tela",
+                       "screenshot", "monitorar tela"],
+            params=["action", "query", "interval"],
+        )
+        self.register_module(
+            name="redact",
+            description="Auto-redação de dados sensíveis",
+            triggers=["dados sensíveis", "redigir", "emails", "senhas", "tokens",
+                       "cpf", "cartão", "privacidade", "redact"],
+            params=["action", "text"],
+        )
+        self.register_module(
+            name="digest",
+            description="Briefing diário automatizado",
+            triggers=["briefing", "bom dia", "resumo do dia", "digest",
+                       "manhã", "agenda do dia"],
+            params=["action", "key", "value"],
+        )
+        self.register_module(
+            name="browser",
+            description="Automação de navegador web",
+            triggers=["abrir site", "navegar", "browser", "playwright",
+                       "automação web", "abrir página", "pesquisar site"],
+            params=["action", "url", "query"],
+        )
+        self.register_module(
+            name="agents",
+            description="Multi-agente e delegação de tarefas",
+            triggers=["delegar", "agente", "tarefa complexa", "multi-agente",
+                       "orquestrar", "agentes"],
+            params=["action", "description"],
+        )
+        self.register_module(
+            name="skills",
+            description="Sistema de skills e habilidades",
+            triggers=["skill", "habilidade", "capacidade", "módulo disponível",
+                       "o que você sabe fazer", "skills"],
+            params=["action", "query", "name"],
+        )
+        self.register_module(
+            name="dictation",
+            description="Modo dictação (falar e digitar)",
+            triggers=["dictação", "ditado", "falar e digitar", "speech to text",
+                       "transcrever", "digitção por voz"],
+            params=["action", "key", "lang"],
         )
 
     def register_module(

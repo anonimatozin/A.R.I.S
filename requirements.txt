@@ -1,8 +1,33 @@
 # J.A.R.V.I.S. - Dependencies
 # Python 3.12+
 
+# Core
 python-dotenv>=1.0.0
 pywin32>=306; sys_platform == "win32"
 openai>=1.0.0
 psutil>=5.9.0
-# rich>=13.0.0
+
+# Multi-Provider IA (Gemini via OpenAI SDK)
+# openai já incluso acima
+
+# Voz Híbrida + Dictation
+edge-tts>=6.1.0
+pyttsx3>=2.90
+SpeechRecognition>=3.10.0
+
+# Desktop Tools + Awareness
+pyautogui>=0.9.54
+
+# OCR (Desktop Awareness)
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# Browser Automation
+playwright>=1.40.0
+
+# Notificações
+plyer>=2.1.0
+
+# Web/Search
+requests>=2.31.0
+beautifulsoup4>=4.12.0

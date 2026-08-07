@@ -1,175 +1,183 @@
-"""Sistema de comandos do J.A.R.V.I.S.
+"""Command Registry do J.A.R.V.I.S.
 
-Registra e executa comandos disponíveis no terminal.
-Suporta argumentos e aliases.
+Registry central de comandos com suporte a decorators e safety.
+Cada módulo se auto-registra via @registry.register().
 """
 
-from typing import Callable, Any
-import shlex
-
-from utils.logger import Logger
-from utils.terminal import Terminal
-
-
-class Command:
-    """Representa um comando registrado.
-
-    Attributes:
-        name: Nome do comando.
-        description: Descrição do comando.
-        callback: Função a ser executada.
-        aliases: Lista de aliases do comando.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        callback: Callable[..., Any],
-        aliases: list[str] | None = None,
-    ) -> None:
-        self.name = name
-        self.description = description
-        self.callback = callback
-        self.aliases = aliases or []
-
-    def execute(self, *args: str) -> Any:
-        """Executa o comando com argumentos.
-
-        Args:
-            *args: Argumentos passados ao comando.
-        """
-        return self.callback(*args)
-
-    def __repr__(self) -> str:
-        return f"Command(name={self.name!r}, aliases={self.aliases})"
+from typing import Callable, Any, Optional
 
 
 class CommandRegistry:
-    """Registro central de comandos.
+    """Registro central de comandos do sistema.
 
-    Gerencia o cadastro e execução de comandos do sistema.
-    Suporta argumentos e aliases.
+    Suporta:
+    1. Text commands (legado): "help", "exit" — registrados via register()
+    2. Intent handlers (novo): module="weather" — registrados via register_intent()
+    3. Safety levels: mapeamento de módulo → nível de segurança
     """
 
-    def __init__(self, logger: Logger) -> None:
-        """Inicializa o registro de comandos.
+    def __init__(self):
+        self._commands: dict[str, Callable] = {}
+        self._command_meta: dict[str, dict] = {}
+        self._intent_handlers: dict[str, Callable] = {}
+        self._intent_meta: dict[str, dict] = {}
+        self._safety_manager = None
+        self._safety_levels: dict[str, int] = {}  # module → SafetyLevel value
+        self._pending_confirmation: dict[str, dict] = {}  # token → {module, action, params, ctx}
 
-        Args:
-            logger: Instância do logger.
-        """
-        self._commands: dict[str, Command] = {}
-        self._aliases: dict[str, str] = {}
-        self._logger = logger
+    # ── Text commands (legado) ──────────────────────────────
 
-    @property
-    def commands(self) -> dict[str, Command]:
-        """Retorna todos os comandos registrados."""
-        return self._commands.copy()
+    def register(self, name: str, description: str = "", aliases: list[str] | None = None):
+        """Decorator para registrar um comando de texto."""
+        def decorator(func):
+            self._commands[name] = func
+            self._command_meta[name] = {
+                "description": description,
+                "aliases": aliases or [],
+            }
+            for alias in (aliases or []):
+                self._commands[alias] = func
+            return func
+        return decorator
 
-    def register(
-        self,
-        name: str,
-        description: str,
-        callback: Callable[..., Any],
-        aliases: list[str] | None = None,
-    ) -> None:
-        """Registra um novo comando.
-
-        Args:
-            name: Nome do comando.
-            description: Descrição do comando.
-            callback: Função a ser chamada.
-            aliases: Lista de aliases (ex: ['s'] para 'search').
-        """
-        if name in self._commands:
-            self._logger.warning(f"Comando '{name}' já registrado. Sobrescrevendo.")
-
-        self._commands[name] = Command(
-            name=name,
-            description=description,
-            callback=callback,
-            aliases=aliases or [],
-        )
-
-        # Registrar aliases
-        for alias in (aliases or []):
-            self._aliases[alias] = name
-
-        self._logger.debug(f"Comando registrado: {name} (aliases: {aliases or []})")
-
-    def _resolve_command(self, text: str) -> tuple[str, str]:
-        """Resolve comando e argumentos.
-
-        Args:
-            text: Texto completo do comando.
-
-        Returns:
-            Tupla (nome_comando, argumentos_texto).
-        """
-        try:
-            parts = shlex.split(text)
-        except ValueError:
-            parts = text.split()
-
+    def execute_text(self, text: str) -> bool:
+        """Executa um comando de texto (legado)."""
+        parts = text.strip().split()
         if not parts:
-            return "", ""
+            return False
 
         cmd_name = parts[0].lower()
-        args = parts[1:] if len(parts) > 1 else []
-
-        # Resolver alias
-        if cmd_name in self._aliases:
-            cmd_name = self._aliases[cmd_name]
-
-        return cmd_name, " ".join(args)
-
-    def execute(self, text: str) -> bool:
-        """Executa um comando com argumentos.
-
-        Args:
-            text: Texto completo (comando + argumentos).
-
-        Returns:
-            True se executado com sucesso.
-        """
-        cmd_name, args_text = self._resolve_command(text)
-        if not cmd_name:
-            return False
-
-        command = self._commands.get(cmd_name)
-        if command is None:
+        handler = self._commands.get(cmd_name)
+        if handler is None:
             return False
 
         try:
-            if args_text:
-                command.execute(args_text)
-            else:
-                command.execute()
-            self._logger.debug(f"Comando executado: {cmd_name}")
+            handler(*parts[1:])
             return True
         except Exception as e:
-            self._logger.error(f"Erro ao executar comando '{cmd_name}': {e}")
+            print(f"  Erro ao executar '{cmd_name}': {e}")
             return False
 
-    def list_commands(self) -> list[tuple[str, str, list[str]]]:
-        """Lista todos os comandos disponíveis.
+    # ── Intent handlers (novo) ──────────────────────────────
+
+    def register_intent(self, module: str, description: str = ""):
+        """Decorator para registrar um handler de intenção por módulo."""
+        def decorator(func):
+            self._intent_handlers[module] = func
+            self._intent_meta[module] = {"description": description}
+            return func
+        return decorator
+
+    def execute_intent(self, module: str, action: str, params: dict, **ctx) -> str | None:
+        """Executa um handler de intenção com verificação de safety.
+
+        Fluxo:
+        1. Verificar safety level do módulo
+        2. Se CRITICAL e sem confirmação → retornar pendência
+        3. Se confirmado → executar
+        4. Senão → executar diretamente
+        """
+        handler = self._intent_handlers.get(module)
+        if handler is None:
+            return None
+
+        # Safety check
+        if self._safety_manager:
+            safety_level = self._get_safety_level(module)
+            from modules.safety import SafetyLevel
+
+            if safety_level >= SafetyLevel.CRITICAL.value:
+                # Precisa de confirmação e/ou senha
+                confirmed = params.get("_confirmed", False)
+                password = params.get("_password", "")
+
+                if not confirmed:
+                    token = f"{module}_{action}"
+                    self._pending_confirmation[token] = {
+                        "module": module,
+                        "action": action,
+                        "params": params,
+                        "ctx": ctx,
+                    }
+                    return f"⚠️ Ação CRITICAL requer confirmação. Responda 'sim' para confirmar."
+
+                if not self._safety_manager.check_password(password):
+                    return "❌ Senha incorreta. Ação negada."
+
+                self._safety_manager._log_audit(f"{module}/{action}", "critical_approved")
+
+            elif safety_level >= SafetyLevel.DANGER.value:
+                self._safety_manager._log_audit(f"{module}/{action}", "danger_executed")
+
+        try:
+            result = handler(action=action, params=params, **ctx)
+            return result
+        except Exception as e:
+            return f"Erro ao executar {module}/{action}: {e}"
+
+    def confirm_pending(self, token: str, confirmed: bool = True, password: str = "") -> str | None:
+        """Confirma uma ação pendente.
 
         Returns:
-            Lista de tuplas (nome, descrição, aliases).
+            Resultado da execução ou None se token inválido.
         """
+        pending = self._pending_confirmation.pop(token, None)
+        if pending is None:
+            return None
+
+        if not confirmed:
+            return "Ação cancelada pelo operador."
+
+        pending["params"]["_confirmed"] = True
+        pending["params"]["_password"] = password
+        return self.execute_intent(**pending)
+
+    def has_pending_confirmation(self) -> bool:
+        return len(self._pending_confirmation) > 0
+
+    def get_pending_tokens(self) -> list[str]:
+        return list(self._pending_confirmation.keys())
+
+    def has_intent(self, module: str) -> bool:
+        return module in self._intent_handlers
+
+    # ── Safety configuration ────────────────────────────────
+
+    def set_safety(self, safety_manager) -> None:
+        """Conecta o SafetyManager ao registry."""
+        self._safety_manager = safety_manager
+
+    def register_safety_level(self, module: str, level: int) -> None:
+        """Define o safety level de um módulo (1=SAFE, 2=CAUTION, 3=DANGER, 4=CRITICAL)."""
+        self._safety_levels[module] = level
+
+    def _get_safety_level(self, module: str) -> int:
+        """Retorna o safety level de um módulo."""
+        if module in self._safety_levels:
+            return self._safety_levels[module]
+        # Default: CAUTION para módulos não mapeados
+        return 2
+
+    # ── Utilidades ──────────────────────────────────────────
+
+    def list_commands(self) -> list[tuple[str, str, list[str]]]:
+        result = []
+        seen = set()
+        for name, meta in self._command_meta.items():
+            if name not in seen:
+                result.append((name, meta["description"], meta["aliases"]))
+                seen.add(name)
+        return result
+
+    def list_intents(self) -> list[tuple[str, str]]:
         return [
-            (cmd.name, cmd.description, cmd.aliases)
-            for cmd in self._commands.values()
+            (module, meta["description"])
+            for module, meta in self._intent_meta.items()
         ]
 
     def has_command(self, name: str) -> bool:
-        """Verifica se um comando existe.
+        return name in self._commands
 
-        Args:
-            name: Nome do comando ou alias.
 
-        Returns:
-            True se o comando existe.
-        """
-        return name in self._commands or name in self._aliases
+# Instância global
+registry = CommandRegistry()

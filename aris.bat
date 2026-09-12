@@ -1,10 +1,11 @@
 @echo off
-title A.R.I.S.
+chcp 65001 >nul
+title A.R.I.S. - Assistente de Raciocínio e Integração de Sistemas
 color 0B
 cls
 
 echo ============================================================
-echo  A.R.I.S. - Just A Rather Very Intelligent System
+echo  A.R.I.S. - Assistente de Raciocínio e Integração de Sistemas
 echo ============================================================
 echo.
 

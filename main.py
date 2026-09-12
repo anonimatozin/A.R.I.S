@@ -1,4 +1,4 @@
-"""A.R.I.S. - Just A Rather Very Intelligent System
+"""A.R.I.S. — Assistente de Raciocínio e Integração de Sistemas
 
 Ponto de entrada principal do projeto.
 Executa o assistente virtual em interface de terminal.

@@ -1,6 +1,6 @@
 # A.R.I.S.
 
-**Just A Rather Very Intelligent System**
+**A.R.I.S. — Assistente de Raciocínio e Integração de Sistemas**
 
 Assistente virtual inspirado no conceito de A.R.I.S., construído com foco em modularidade, escalabilidade e facilidade de manutenção.
 

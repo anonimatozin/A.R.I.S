@@ -6,7 +6,7 @@
 
 ## PARTE 1 — VISÃO GERAL DO PROJETO
 
-**Nome:** A.R.I.S. (Just A Rather Very Intelligent System)
+**Nome:** A.R.I.S. — Assistente de Raciocínio e Integração de Sistemas
 **Localização:** `C:\Users\Administrator\Documents\ARIS`
 **Plataforma:** Windows 10/11, Python 3.12
 **Tipo:** Assistente de IA via terminal com controle total do PC

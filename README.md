@@ -1,8 +1,8 @@
-# J.A.R.V.I.S.
+# A.R.I.S.
 
 **Just A Rather Very Intelligent System**
 
-Assistente virtual inspirado no conceito de J.A.R.V.I.S., construído com foco em modularidade, escalabilidade e facilidade de manutenção.
+Assistente virtual inspirado no conceito de A.R.I.S., construído com foco em modularidade, escalabilidade e facilidade de manutenção.
 
 ## Requisitos
 
@@ -12,7 +12,7 @@ Assistente virtual inspirado no conceito de J.A.R.V.I.S., construído com foco e
 ## Estrutura do Projeto
 
 ```
-Jarvis/
+Aris/
 ├── main.py                 # Ponto de entrada principal
 ├── requirements.txt        # Dependências do projeto
 ├── .env.example            # Variáveis de ambiente (modelo)
@@ -21,7 +21,7 @@ Jarvis/
 │   └── settings.py         # Classe Settings
 ├── core/                   # Componentes centrais
 │   ├── __init__.py
-│   ├── jarvis.py           # Classe principal Jarvis
+│   ├── aris.py           # Classe principal Aris
 │   ├── module_manager.py   # Gerenciador de módulos
 │   └── commands.py         # Sistema de comandos
 ├── modules/                # Módulos do sistema
@@ -70,16 +70,16 @@ cp .env.example .env
 
 | Variável                  | Descrição                          | Padrão   |
 |---------------------------|------------------------------------|----------|
-| `JARVIS_LOG_LEVEL`        | Nível de log                       | `INFO`   |
-| `JARVIS_MAX_LOG_SIZE_MB`  | Tamanho máximo do log (MB)         | `10`     |
-| `JARVIS_PROMPT`           | Texto do prompt de entrada         | `> `     |
+| `ARIS_LOG_LEVEL`        | Nível de log                       | `INFO`   |
+| `ARIS_MAX_LOG_SIZE_MB`  | Tamanho máximo do log (MB)         | `10`     |
+| `ARIS_PROMPT`           | Texto do prompt de entrada         | `> `     |
 
 ## Arquitetura
 
 O projeto segue uma arquitetura modular com separação clara de responsabilidades:
 
 - **config/**: Configurações centralizadas carregadas de variáveis de ambiente.
-- **core/**: Componentes centrais (Jarvis, ModuleManager, CommandRegistry).
+- **core/**: Componentes centrais (Aris, ModuleManager, CommandRegistry).
 - **modules/**: Módulos independentes que estendem funcionalidades.
 - **plugins/**: Diretório reservado para plugins de terceiros.
 - **utils/**: Utilitários reutilizáveis (logger, terminal).
@@ -108,7 +108,7 @@ registry.register(
 
 ## Sistema de Logs
 
-Logs são gravados em `logs/jarvis.log` com rotação automática.
+Logs são gravados em `logs/aris.log` com rotação automática.
 
 - Nível padrão: `INFO`
 - Tamanho máximo: `10 MB`

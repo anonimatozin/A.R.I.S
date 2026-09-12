@@ -1,4 +1,4 @@
-"""Rate Limiter do J.A.R.V.I.S.
+"""Rate Limiter do A.R.I.S.
 
 Controle de taxa de chamadas para APIs externas.
 Previne estouro de quota em uso intenso.

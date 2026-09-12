@@ -1,4 +1,4 @@
-"""Notificações Windows do J.A.R.V.I.S.
+"""Notificações Windows do A.R.I.S.
 
 Sistema de notificações nativas do Windows.
 """

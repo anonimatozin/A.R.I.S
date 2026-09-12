@@ -1,11 +1,11 @@
-"""ESP32 Hardware Manager do J.A.R.V.I.S.
+"""ESP32 Hardware Manager do A.R.I.S.
 
 Gerencia comunicação WebSocket com ESP32, controle de LEDs,
 detecção de botão e estados visuais.
 
 Arquitetura:
-  JARVIS → HardwareManager → WebSocket → ESP32
-  ESP32 → WebSocket → HardwareManager → JARVIS Event System
+  ARIS → HardwareManager → WebSocket → ESP32
+  ESP32 → WebSocket → HardwareManager → ARIS Event System
 """
 
 import json
@@ -25,7 +25,7 @@ from utils.logger import Logger
 # ── Estados do Sistema ──────────────────────────────────────
 
 class SystemState(Enum):
-    """Estados visuais do JARVIS."""
+    """Estados visuais do ARIS."""
     INITIALIZING = "initializing"
     IDLE = "idle"
     LISTENING = "listening"
@@ -103,7 +103,7 @@ BUTTON_ACTIONS = {
 # ── Hardware Manager ────────────────────────────────────────
 
 class HardwareManager:
-    """Gerencia hardware ESP32 conectado ao JARVIS.
+    """Gerencia hardware ESP32 conectado ao ARIS.
 
     Funcionalidades:
     - WebSocket server para receber conexões do ESP32
@@ -341,7 +341,7 @@ class HardwareManager:
     # ── Sistema de Estados ──────────────────────────────────
 
     def set_state(self, state: SystemState) -> None:
-        """Muda o estado visual do JARVIS."""
+        """Muda o estado visual do ARIS."""
         if state == self._current_state:
             return
 

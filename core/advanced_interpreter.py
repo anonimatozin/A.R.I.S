@@ -1,4 +1,4 @@
-"""Advanced Interpreter - Interpretador Multi-Comando do J.A.R.V.I.S.
+"""Advanced Interpreter - Interpretador Multi-Comando do A.R.I.S.
 
 Interpreta qualquer frase em linguagem natural e extrai múltiplos comandos.
 Suporta contexto, referências, condicionais e sequências.
@@ -229,7 +229,7 @@ class AdvancedInterpreter:
         context = self._get_context_string()
         resolved = self.resolve_references(user_message)
 
-        return f"""Você é o cérebro do J.A.R.V.I.S., um assistente avançado.
+        return f"""Você é o cérebro do A.R.I.S., um assistente avançado.
 
 SUA MISSÃO: Interpretar QUALQUER frase do operador e transformar em comandos estruturados.
 
@@ -257,7 +257,7 @@ SUA MISSÃO: Interpretar QUALQUER frase do operador e transformar em comandos es
 Responda SEMPRE neste formato exato:
 
 ### Resposta natural ao operador
-(Responda em português, como o J.A.R.V.I.S. falaria)
+(Responda em português, como o A.R.I.S. falaria)
 
 ### Comandos
 ```json

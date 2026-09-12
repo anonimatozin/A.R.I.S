@@ -1,4 +1,4 @@
-"""Classe principal do J.A.R.V.I.S.
+"""Classe principal do A.R.I.S.
 
 Orquestra o funcionamento do sistema, gerenciando módulos,
 comandos e a interface do terminal.
@@ -43,25 +43,25 @@ from system.analyzer import PersonalAnalyzer
 from weather.hyper_weather import HyperWeather
 from search.hyper_search import HyperSearch
 from utils.logger import Logger
-from utils.terminal import Terminal, JarvisUI
+from utils.terminal import Terminal, ArisUI
 from utils.voice import Voice
 from utils.voice_hybrid import HybridVoice
 
 
-class Jarvis:
-    """Classe principal do assistente J.A.R.V.I.S.
+class Aris:
+    """Classe principal do assistente A.R.I.S.
 
     Responsável por inicializar todos os subsistemas,
     carregar módulos e executar o loop principal.
     """
 
     def __init__(self) -> None:
-        """Inicializa o J.A.R.V.I.S. com todas as dependências."""
+        """Inicializa o A.R.I.S. com todas as dependências."""
         self._settings = Settings()
         self._settings.ensure_directories()
 
         self._logger = Logger(
-            name="jarvis",
+            name="aris",
             log_dir=self._settings.LOG_DIR,
             level=self._settings.LOG_LEVEL,
             max_size_mb=self._settings.MAX_LOG_SIZE_MB,
@@ -207,7 +207,7 @@ class Jarvis:
         module = intent.module
         params = intent.params
 
-        JarvisUI.show_action(module, intent.action, params)
+        ArisUI.show_action(module, intent.action, params)
 
         # Comando de saída (sempre funciona)
         if module == "exit":
@@ -235,18 +235,18 @@ class Jarvis:
 
     def _print_banner(self) -> None:
         """Exibe o banner inicial do sistema."""
-        JarvisUI.show_banner(self._settings.VERSION)
+        ArisUI.show_banner(self._settings.VERSION)
 
     def start(self) -> None:
-        """Inicia o J.A.R.V.I.S."""
-        self._logger.info("Iniciando J.A.R.V.I.S.")
+        """Inicia o A.R.I.S."""
+        self._logger.info("Iniciando A.R.I.S.")
 
         # Carregar módulos
         self._module_manager.load_modules()
 
         # Configurar multi-provider com personalidade
-        from config.personality import JARVIS_PERSONALITY
-        self._multi_chat.set_system_prompt(JARVIS_PERSONALITY)
+        from config.personality import ARIS_PERSONALITY
+        self._multi_chat.set_system_prompt(ARIS_PERSONALITY)
 
         # Iniciar hardware ESP32
         if self._esp32_config.enabled:
@@ -272,7 +272,7 @@ class Jarvis:
         # Saudação por voz
         voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
         if voice.enabled:
-            voice.speak("J.A.R.V.I.S. inicializado. Todos os sistemas operacionais.")
+            voice.speak("A.R.I.S. inicializado. Todos os sistemas operacionais.")
 
         # Status do provider
         provider_status = self._multi_chat.get_status()
@@ -284,12 +284,12 @@ class Jarvis:
         # Loop principal
         self._running = True
         self._logger.info("Sistema pronto para recebimento de comandos.")
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-llm")
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="aris-llm")
 
         while self._running:
             try:
                 # Input moderno com status
-                user_input = JarvisUI.input_modern(
+                user_input = ArisUI.input_modern(
                     version=self._settings.VERSION,
                     provider=self._multi_chat.provider_name if self._multi_chat.available else "local",
                     mem_count=self._memory.get_stats().get("total_memories", 0),
@@ -323,7 +323,7 @@ class Jarvis:
                         future = self._executor.submit(chat.send, intent_prompt)
                         response = future.result(timeout=60.0)
                     except concurrent.futures.TimeoutError:
-                        JarvisUI.show_error("Tempo limite excedido (60s). Tente novamente.")
+                        ArisUI.show_error("Tempo limite excedido (60s). Tente novamente.")
                         self._sync_hardware_state(SystemState.IDLE)
                         continue
                     except concurrent.futures.CancelledError:
@@ -335,7 +335,7 @@ class Jarvis:
 
                     # Mostrar quantas acoes foram detectadas
                     if len(intents) > 1:
-                        JarvisUI.show_actions_count(len(intents))
+                        ArisUI.show_actions_count(len(intents))
 
                     # Executar todas as intencoes na ordem
                     for intent in intents:
@@ -346,7 +346,7 @@ class Jarvis:
 
                     # Mostrar resposta formatada
                     if clean_response:
-                        JarvisUI.show_response(clean_response)
+                        ArisUI.show_response(clean_response)
 
                     if voice.enabled and clean_response:
                         self._sync_hardware_state(SystemState.SPEAKING)
@@ -382,7 +382,7 @@ class Jarvis:
                             is_permanente=is_permanente,
                         )
                 else:
-                    JarvisUI.show_error("Chat indisponivel. Configure GROQ_API_KEY ou GEMINI_API_KEY no .env.")
+                    ArisUI.show_error("Chat indisponivel. Configure GROQ_API_KEY ou GEMINI_API_KEY no .env.")
 
             except KeyboardInterrupt:
                 # Cancelar operação em andamento
@@ -457,21 +457,21 @@ class Jarvis:
     # ── Estado visual → ESP32 ───────────────────────────────
 
     def _sync_hardware_state(self, state: SystemState) -> None:
-        """Sincroniza estado do JARVIS com ESP32."""
+        """Sincroniza estado do ARIS com ESP32."""
         if self._hardware.connected:
             self._hardware.set_state(state)
 
     def _show_help(self) -> None:
         """Exibe ajuda com todos os comandos disponiveis."""
-        JarvisUI.show_help_header()
+        ArisUI.show_help_header()
 
-        JarvisUI.show_help_section("Gerais", [
+        ArisUI.show_help_section("Gerais", [
             ("help / ajuda", "Mostra esta ajuda"),
             ("exit / sair", "Encerra o sistema"),
             ("config", "Abre configuracoes"),
         ])
 
-        JarvisUI.show_help_section("OpenClaw + 20 Projetos", [
+        ArisUI.show_help_section("OpenClaw + 20 Projetos", [
             ("knowledge", "Grafo de conhecimento"),
             ("awareness", "Captura de tela + OCR"),
             ("redact", "Auto-redacao de dados"),
@@ -482,7 +482,7 @@ class Jarvis:
             ("dictation", "Modo dictacao"),
         ])
 
-        JarvisUI.show_help_section("Anteriores", [
+        ArisUI.show_help_section("Anteriores", [
             ("desktop", "Controle do desktop"),
             ("scheduler", "Agendamentos e pomodoro"),
             ("notify", "Notificacao Windows"),
@@ -492,7 +492,7 @@ class Jarvis:
             ("turbo", "Analise profunda"),
         ])
 
-        JarvisUI.show_help_section("Hardware", [
+        ArisUI.show_help_section("Hardware", [
             ("hardware", "Status do ESP32"),
             ("hardware connect", "Conectar ESP32"),
             ("hardware state [estado]", "Mudar estado visual"),
@@ -503,7 +503,7 @@ class Jarvis:
             ("hardware leds_off", "Desligar LEDs"),
         ])
 
-        JarvisUI.show_help_section("Existentes", [
+        ArisUI.show_help_section("Existentes", [
             ("weather", "Previsao do tempo"),
             ("websearch", "Pesquisa na web"),
             ("sys", "Analise do sistema"),
@@ -528,7 +528,7 @@ class Jarvis:
         return f"[{' | '.join(parts)}] > "
 
     def shutdown(self) -> None:
-        """Encerra o J.A.R.V.I.S. de forma limpa."""
+        """Encerra o A.R.I.S. de forma limpa."""
         self._running = False
 
         # Encerrar executor de threads
@@ -540,4 +540,4 @@ class Jarvis:
             self._hardware.set_state(SystemState.OFFLINE)
             self._hardware.stop()
 
-        self._logger.info("J.A.R.V.I.S. encerrado.")
+        self._logger.info("A.R.I.S. encerrado.")

@@ -1,4 +1,4 @@
-"""Sistema de voz híbrido do J.A.R.V.I.S.
+"""Sistema de voz híbrido do A.R.I.S.
 
 Suporta múltiplos engines de TTS:
 - edge-tts (online, alta qualidade, PT-BR)
@@ -136,7 +136,7 @@ class HybridVoice:
     async def _edge_tts_speak(self, text: str) -> None:
         """Gera áudio via edge-tts e reproduz."""
         voice = "pt-BR-FranciscaNeural"
-        tmp_file = os.path.join(tempfile.gettempdir(), "jarvis_speech.mp3")
+        tmp_file = os.path.join(tempfile.gettempdir(), "aris_speech.mp3")
 
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(tmp_file)
@@ -154,12 +154,12 @@ class HybridVoice:
             try:
                 import ctypes
                 ctypes.windll.winmm.mciSendStringW(
-                    f'open "{tmp_file}" type mpegvideo alias jarvis_speak', None, 0, None
+                    f'open "{tmp_file}" type mpegvideo alias aris_speak', None, 0, None
                 )
-                ctypes.windll.winmm.mciSendStringW("play jarvis_speak", None, 0, None)
+                ctypes.windll.winmm.mciSendStringW("play aris_speak", None, 0, None)
                 import time
                 time.sleep(3)
-                ctypes.windll.winmm.mciSendStringW("close jarvis_speak", None, 0, None)
+                ctypes.windll.winmm.mciSendStringW("close aris_speak", None, 0, None)
             except Exception:
                 pass
 

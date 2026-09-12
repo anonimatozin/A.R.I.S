@@ -1,4 +1,4 @@
-# J.A.R.V.I.S. - Dependencies
+# A.R.I.S. - Dependencies
 # Python 3.12+
 
 # Core

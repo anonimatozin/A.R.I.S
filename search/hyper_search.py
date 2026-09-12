@@ -1,4 +1,4 @@
-"""Hyper Search Engine do J.A.R.V.I.S.
+"""Hyper Search Engine do A.R.I.S.
 
 Sistema de pesquisa inteligente multi-fonte.
 Consulta multiplas fontes, compara e consolida resultados.
@@ -64,7 +64,7 @@ class HyperSearch:
                 f"https://serpapi.com/search.json"
                 f"?q={quote_plus(query)}&api_key={key}&num={limit}&hl=pt-br"
             )
-            req = Request(url, headers={"User-Agent": "JARVIS-NEXUS/1.0"})
+            req = Request(url, headers={"User-Agent": "ARIS-NEXUS/1.0"})
             with urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read().decode())
 

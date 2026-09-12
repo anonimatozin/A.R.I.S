@@ -1,4 +1,4 @@
-"""Organizador de memória do J.A.R.V.I.S.
+"""Organizador de memória do A.R.I.S.
 
 Responsável pela limpeza automática, organização e manutenção
 do sistema de memória.

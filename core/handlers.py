@@ -1,4 +1,4 @@
-"""Intent Handlers do J.A.R.V.I.S.
+"""Intent Handlers do A.R.I.S.
 
 Todos os handlers de intenção registrados via @registry.register_intent().
 Cada handler recebe: action, params, **ctx (com instâncias dos módulos).
@@ -12,7 +12,7 @@ Para adicionar um novo handler:
         return modulo.faz_algo(params.get("arg"))
 """
 
-from utils.terminal import Terminal, JarvisUI
+from utils.terminal import Terminal, ArisUI
 from core.commands import registry
 
 
@@ -133,7 +133,7 @@ def handle_scheduler(action: str, params: dict, **ctx) -> str:
 
 @registry.register_intent("notify", description="Notificações Windows")
 def handle_notify(action: str, params: dict, **ctx) -> str:
-    title = params.get("title", "J.A.R.V.I.S.")
+    title = params.get("title", "A.R.I.S.")
     message = params.get("message", "")
     if message:
         result = ctx["notifications"].notify(title, message)

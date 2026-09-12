@@ -1,4 +1,4 @@
-"""Plugins do projeto J.A.R.V.I.S.
+"""Plugins do projeto A.R.I.S.
 
 Este diretório é reservado para plugins de terceiros.
 """

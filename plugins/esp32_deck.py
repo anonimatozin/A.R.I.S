@@ -1,4 +1,4 @@
-"""Plugin ESP32 Deck para J.A.R.V.I.S.
+"""Plugin ESP32 Deck para A.R.I.S.
 
 Intent handlers para controle do ESP32 via comandos de terminal.
 Registra o módulo 'hardware' no registry.

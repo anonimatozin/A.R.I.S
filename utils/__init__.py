@@ -1,4 +1,4 @@
-"""Utilitários do projeto J.A.R.V.I.S.
+"""Utilitários do projeto A.R.I.S.
 
 Este módulo expõe ferramentas auxiliares para uso global.
 """

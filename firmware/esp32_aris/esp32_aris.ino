@@ -1,5 +1,5 @@
 /*
- * J.A.R.V.I.S. ESP32 Firmware
+ * A.R.I.S. ESP32 Firmware
  * 
  * Comunicação WebSocket com o PC.
  * Controla 2 LEDs RGB + 1 botão com debounce.
@@ -347,7 +347,7 @@ void handleWebSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("[ESP32] J.A.R.V.I.S. Hardware iniciando...");
+  Serial.println("[ESP32] A.R.I.S. Hardware iniciando...");
   
   // Configurar PWM para LEDs (API nova do ESP32 Arduino Core 3.x)
   ledcAttach(LED_LEFT_R, PWM_FREQ, PWM_RESOLUTION);

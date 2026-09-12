@@ -1,10 +1,10 @@
 @echo off
-title J.A.R.V.I.S.
+title A.R.I.S.
 color 0B
 cls
 
 echo ============================================================
-echo  J.A.R.V.I.S. - Just A Rather Very Intelligent System
+echo  A.R.I.S. - Just A Rather Very Intelligent System
 echo ============================================================
 echo.
 

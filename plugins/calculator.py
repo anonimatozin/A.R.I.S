@@ -1,10 +1,10 @@
 """Plugin de exemplo: Calculator
 
-Demonstra como criar um plugin para o J.A.R.V.I.S.
+Demonstra como criar um plugin para o A.R.I.S.
 Plugin simples que avalia expressões matemáticas.
 
 Para instalar: coloque este arquivo em plugins/
-O J.A.R.V.I.S. carrega automaticamente no próximo start.
+O A.R.I.S. carrega automaticamente no próximo start.
 """
 
 from core.commands import registry

@@ -1,7 +1,7 @@
-"""Browser Automation - Automação de Navegador do J.A.R.V.I.S.
+"""Browser Automation - Automação de Navegador do A.R.I.S.
 
 Usa Playwright para automação web.
-Inspirado em OpenClaw e isair/jarvis.
+Inspirado em OpenClaw e isair/aris.
 """
 
 import json

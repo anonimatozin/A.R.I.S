@@ -1,5 +1,5 @@
 # ============================================================
-# J.A.R.V.I.S. - Análise de Melhorias
+# A.R.I.S. - Análise de Melhorias
 # ============================================================
 # Data: 2026-08-06
 # ============================================================
@@ -11,9 +11,9 @@
 ### Problemas Atuais
 
 - Módulos em modules/ nunca são integrados ao CommandRegistry
-- Comandos hardcoded em jarvis.py (God class)
+- Comandos hardcoded em aris.py (God class)
 - CommandRegistry aceita apenas Callable sem argumentos
-- MEMORY_ROOT hardcoded como Path("E:\\JARVIS_MEMORY")
+- MEMORY_ROOT hardcoded como Path("E:\\ARIS_MEMORY")
 - Modelo de chat fixo (llama-3.3-70b-versatile) sem vir de settings
 
 ### Ideias de Melhoria
@@ -21,8 +21,8 @@
 - [ ] Plugin system real: ModuleManager deve registrar comandos automaticamente
 - [ ] Comandos com args: parsing de argumentos (ex: search --cat projects python)
 - [ ] Settings centralizado: mover GROQ_API_KEY, MEMORY_ROOT, CHAT_MODEL para Settings
-- [ ] Injeção de dependência: usar protocolos/dataclasses para desacoplar Jarvis
-- [ ] God class split: extrair _cmd_* methods de jarvis.py para módulos separados
+- [ ] Injeção de dependência: usar protocolos/dataclasses para desacoplar Aris
+- [ ] God class split: extrair _cmd_* methods de aris.py para módulos separados
 
 
 ## 2. FUNCIONALIDADES
@@ -56,7 +56,7 @@
 
 ### Ideias
 
-- [ ] Prompt dinâmico: [jarvis v0.1.0 | groq | 42 memórias] >
+- [ ] Prompt dinâmico: [aris v0.1.0 | groq | 42 memórias] >
 - [ ] Loading indicator: spinner durante chamadas API
 - [ ] Tab completion: usar prompt_toolkit ou readline
 - [ ] Cores contextuais: erros vermelho, warnings amarelo, info ciano
@@ -126,13 +126,13 @@
 ## ARQUITETURA ATUAL (Referência)
 ------------------------------------------------------------
 
-JARVIS/
+ARIS/
 ├── main.py                 # Ponto de entrada
 ├── config/
 │   ├── settings.py         # Configurações (frozen dataclass)
 │   └── personality.py      # System prompt do LLM
 ├── core/
-│   ├── jarvis.py           # Classe principal (God class)
+│   ├── aris.py           # Classe principal (God class)
 │   ├── module_manager.py   # Carrega módulos mas não integra
 │   ├── commands.py         # CommandRegistry (sem args)
 │   ├── memory.py           # MemoryManager (JSON files)

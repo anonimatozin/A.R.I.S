@@ -1,4 +1,4 @@
-"""Context Detector - Detecta a atividade atual do J.A.R.V.I.S.
+"""Context Detector - Detecta a atividade atual do A.R.I.S.
 
 Analisa o que o operador está fazendo e adapta respostas.
 """

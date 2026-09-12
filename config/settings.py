@@ -1,4 +1,4 @@
-"""Sistema de configuração do J.A.R.V.I.S.
+"""Sistema de configuração do A.R.I.S.
 
 Carrega configurações de variáveis de ambiente e arquivos .env.
 """
@@ -32,7 +32,7 @@ class Settings:
         PROMPT: Texto do prompt de entrada.
     """
 
-    PROJECT_NAME: str = "J.A.R.V.I.S."
+    PROJECT_NAME: str = "A.R.I.S."
     VERSION: str = "1.0.0"
 
     BASE_DIR: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent)
@@ -63,17 +63,17 @@ class Settings:
         object.__setattr__(self, "MODULES_DIR", self.BASE_DIR / "modules")
         object.__setattr__(self, "PLUGINS_DIR", self.BASE_DIR / "plugins")
 
-        object.__setattr__(self, "LOG_LEVEL", os.getenv("JARVIS_LOG_LEVEL", "INFO"))
-        object.__setattr__(self, "MAX_LOG_SIZE_MB", int(os.getenv("JARVIS_MAX_LOG_SIZE_MB", "10")))
-        object.__setattr__(self, "PROMPT", os.getenv("JARVIS_PROMPT", "> "))
-        object.__setattr__(self, "VOICE_RATE", int(os.getenv("JARVIS_VOICE_RATE", "0")))
-        object.__setattr__(self, "VOICE_VOLUME", int(os.getenv("JARVIS_VOICE_VOLUME", "100")))
+        object.__setattr__(self, "LOG_LEVEL", os.getenv("ARIS_LOG_LEVEL", "INFO"))
+        object.__setattr__(self, "MAX_LOG_SIZE_MB", int(os.getenv("ARIS_MAX_LOG_SIZE_MB", "10")))
+        object.__setattr__(self, "PROMPT", os.getenv("ARIS_PROMPT", "> "))
+        object.__setattr__(self, "VOICE_RATE", int(os.getenv("ARIS_VOICE_RATE", "0")))
+        object.__setattr__(self, "VOICE_VOLUME", int(os.getenv("ARIS_VOICE_VOLUME", "100")))
         object.__setattr__(self, "GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
         object.__setattr__(self, "GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
-        object.__setattr__(self, "CHAT_MODEL", os.getenv("JARVIS_CHAT_MODEL", "llama-3.3-70b-versatile"))
-        object.__setattr__(self, "MEMORY_ROOT", Path(os.getenv("JARVIS_MEMORY_ROOT", "E:\\JARVIS_MEMORY")))
+        object.__setattr__(self, "CHAT_MODEL", os.getenv("ARIS_CHAT_MODEL", "llama-3.3-70b-versatile"))
+        object.__setattr__(self, "MEMORY_ROOT", Path(os.getenv("ARIS_MEMORY_ROOT", str(self.BASE_DIR / "data" / "memory"))))
         object.__setattr__(self, "SCHEDULER_DIR", self.DATA_DIR)
-        object.__setattr__(self, "SAFETY_PASSWORD", os.getenv("JARVIS_SAFETY_PASSWORD", ""))
+        object.__setattr__(self, "SAFETY_PASSWORD", os.getenv("ARIS_SAFETY_PASSWORD", ""))
         object.__setattr__(self, "ESP32_ENABLED", os.getenv("ESP32_ENABLED", "true").lower() == "true")
         object.__setattr__(self, "ESP32_WS_PORT", int(os.getenv("ESP32_WS_PORT", "8766")))
         object.__setattr__(self, "ESP32_SIMULATION", os.getenv("HARDWARE_SIMULATION", "false").lower() == "true")

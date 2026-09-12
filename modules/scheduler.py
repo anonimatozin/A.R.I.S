@@ -1,4 +1,4 @@
-"""Scheduler - Agendamentos e Lembretes do J.A.R.V.I.S.
+"""Scheduler - Agendamentos e Lembretes do A.R.I.S.
 
 Gerencia lembretes, tarefas agendadas e pomodoro.
 """

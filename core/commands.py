@@ -1,4 +1,4 @@
-"""Command Registry do J.A.R.V.I.S.
+"""Command Registry do A.R.I.S.
 
 Registry central de comandos com suporte a decorators e safety.
 Cada módulo se auto-registra via @registry.register().

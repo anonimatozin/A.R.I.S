@@ -1,4 +1,4 @@
-"""Hyper Weather System do J.A.R.V.I.S.
+"""Hyper Weather System do A.R.I.S.
 
 Sistema de previsao do tempo multi-fonte.
 Combina dados de multiplas APIs meteorologicas.
@@ -64,7 +64,7 @@ class HyperWeather:
                 f"https://api.openweathermap.org/data/2.5/weather"
                 f"?q={encoded_city}&appid={key}&units=metric&lang=pt_br"
             )
-            req = Request(url, headers={"User-Agent": "JARVIS-NEXUS/1.0"})
+            req = Request(url, headers={"User-Agent": "ARIS-NEXUS/1.0"})
             with urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 
@@ -93,7 +93,7 @@ class HyperWeather:
                 f"https://api.weatherapi.com/v1/current.json"
                 f"?key={key}&q={encoded_city}&lang=pt"
             )
-            req = Request(url, headers={"User-Agent": "JARVIS-NEXUS/1.0"})
+            req = Request(url, headers={"User-Agent": "ARIS-NEXUS/1.0"})
             with urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 

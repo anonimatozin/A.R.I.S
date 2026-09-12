@@ -1,7 +1,7 @@
-"""Knowledge Graph - Memória Avançada do J.A.R.V.I.S.
+"""Knowledge Graph - Memória Avançada do A.R.I.S.
 
 Sistema de grafos de conhecimento: entidades, fatos, relacionamentos.
-Inspirado em isair/jarvis e vierisid/jarvis.
+Inspirado em isair/aris e vierisid/aris.
 """
 
 import json

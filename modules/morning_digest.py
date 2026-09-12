@@ -1,7 +1,7 @@
-"""Morning Digest - Briefing Diário do J.A.R.V.I.S.
+"""Morning Digest - Briefing Diário do A.R.I.S.
 
 Gera um resumo completo ao iniciar o dia.
-Inspirado em open-jarvis/OpenJarvis.
+Inspirado em open-aris/OpenAris.
 """
 
 import json

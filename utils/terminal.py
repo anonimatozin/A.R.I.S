@@ -1,4 +1,4 @@
-"""Utilitarios de terminal do J.A.R.V.I.S.
+"""Utilitarios de terminal do A.R.I.S.
 
 Interface visual moderna inspirada em OpenCode/Claude Code.
 """
@@ -126,23 +126,23 @@ class Terminal:
         return False
 
 
-class JarvisUI:
-    """Interface visual moderna do J.A.R.V.I.S."""
+class ArisUI:
+    """Interface visual moderna do A.R.I.S."""
 
-    # Arte ASCII do JARVIS
+    # Arte ASCII do ARIS
     LOGO = r"""
-    ╔═══════════════════════════════════════════════════════════╗
-    ║                                                           ║
-    ║      ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗             ║
-    ║      ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝             ║
-    ║      ██║███████║██████╔╝██║   ██║██║███████╗             ║
-    ║ ██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║             ║
-    ║ ╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║             ║
-    ║  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝             ║
-    ║                                                           ║
-    ║               v{version}                                  ║
-    ║                                                           ║
-    ╚═══════════════════════════════════════════════════════════╝"""
+    ╔════════════════════════════════════════════╗
+    ║                                            ║
+    ║   █████╗  ██████╗  ██╗     ██████╗         ║
+    ║  ██╔══██╗  ██╔══██╗  ╚██╗    ██╔══██╗      ║
+    ║  ███████║  █████╔╝   ██║    █████╔╝        ║
+    ║  ██╔══██║  ██╔══██╗   ██║    ╚══██╔═╝      ║
+    ║  ██║  ██║  ██║  ██║   ██║    ██║  ██║      ║
+    ║  ╚═╝  ╚═╝  ╚═╝  ╚═╝   ╚═╝    ╚█████╔╝      ║
+    ║                                            ║
+    ║                v{version}                  ║
+    ║                                            ║
+    ╚════════════════════════════════════════════╝"""
 
     @staticmethod
     def show_banner(version: str = "1.0.0") -> None:
@@ -150,7 +150,7 @@ class JarvisUI:
         Terminal.clear()
 
         # Logo ASCII
-        logo = JarvisUI.LOGO.format(version=version)
+        logo = ArisUI.LOGO.format(version=version)
         print(Terminal.colorize(logo, Terminal.CYAN))
 
         # Status bar
@@ -221,7 +221,7 @@ class JarvisUI:
 
         return (
             f"{Terminal.DIM}╭─{Terminal.RESET}"
-            f"{Terminal.CYAN} {provider_icon} JARVIS {Terminal.DIM}│{Terminal.RESET}"
+            f"{Terminal.CYAN} {provider_icon} ARIS {Terminal.DIM}│{Terminal.RESET}"
             f"{Terminal.GRAY} v{version}{Terminal.DIM} │{Terminal.RESET}"
             f"{Terminal.GREEN} {mem_count} mem{Terminal.DIM} {Terminal.RESET}"
             f"{Terminal.DIM}─╮{Terminal.RESET}"
@@ -230,7 +230,7 @@ class JarvisUI:
 
     @staticmethod
     def show_response(response: str) -> None:
-        """Exibe resposta do JARVIS formatada."""
+        """Exibe resposta do ARIS formatada."""
         print()
         lines = response.split("\n")
         for line in lines:
@@ -290,7 +290,7 @@ class JarvisUI:
     def show_help_header() -> None:
         """Exibe cabecalho de ajuda."""
         print()
-        print(f"  {Terminal.BOLD}{Terminal.CYAN}J.A.R.V.I.S.{Terminal.RESET} {Terminal.DIM}— Comandos Disponiveis{Terminal.RESET}")
+        print(f"  {Terminal.BOLD}{Terminal.CYAN}A.R.I.S.{Terminal.RESET} {Terminal.DIM}— Comandos Disponiveis{Terminal.RESET}")
         print(f"  {Terminal.DIM}{'─' * 50}{Terminal.RESET}")
 
     @staticmethod
@@ -320,7 +320,7 @@ class JarvisUI:
         }.get(provider, "●")
 
         print()
-        print(f"  {Terminal.CYAN}{Terminal.BOLD}J.A.R.V.I.S.{Terminal.RESET} {Terminal.DIM}v{version}{Terminal.RESET}")
+        print(f"  {Terminal.CYAN}{Terminal.BOLD}A.R.I.S.{Terminal.RESET} {Terminal.DIM}v{version}{Terminal.RESET}")
         print(f"  {Terminal.DIM}─────────────────────────────────────{Terminal.RESET}")
         print(f"  {Terminal.GREEN}●{Terminal.RESET} Sistemas operacionais  {Terminal.DIM}│{Terminal.RESET}  {Terminal.CYAN}{provider_icon} {provider}{Terminal.RESET}")
         print()
@@ -355,7 +355,7 @@ class JarvisUI:
         # Prompt formatado
         prompt = (
             f"\n  {Terminal.DIM}╭─{Terminal.RESET}"
-            f"{Terminal.CYAN} JARVIS {Terminal.DIM}│{Terminal.RESET}"
+            f"{Terminal.CYAN} ARIS {Terminal.DIM}│{Terminal.RESET}"
             f" {indicator_str}"
             f" {Terminal.DIM}─╮{Terminal.RESET}"
             f"\n  {Terminal.DIM}╰─▸{Terminal.RESET} "

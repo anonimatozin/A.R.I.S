@@ -1,4 +1,4 @@
-"""Sistema de voz do J.A.R.V.I.S.
+"""Sistema de voz do A.R.I.S.
 
 Utiliza o Windows SAPI (Speech API) para síntese de voz.
 """

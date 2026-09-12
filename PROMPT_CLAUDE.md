@@ -1,4 +1,4 @@
-# Prompt para Claude — Análise do JARVIS Atualizado
+# Prompt para Claude — Análise do ARIS Atualizado
 
 Cole este prompt no Claude e peça para ele analisar e sugerir melhorias:
 
@@ -6,16 +6,16 @@ Cole este prompt no Claude e peça para ele analisar e sugerir melhorias:
 
 ## Contexto
 
-Sou o desenvolvedor do J.A.R.V.I.S., um assistente pessoal via terminal em Python 3.12 (Windows). Acabei de implementar 5 features estruturais e quero que você analise o que foi feito e sugira O QUE MAIS FAZER — tudo de uma vez, sem perguntas, sem etapas. Lista completa.
+Sou o desenvolvedor do A.R.I.S., um assistente pessoal via terminal em Python 3.12 (Windows). Acabei de implementar 5 features estruturais e quero que você analise o que foi feito e sugira O QUE MAIS FAZER — tudo de uma vez, sem perguntas, sem etapas. Lista completa.
 
 ## O que foi implementado
 
 ### 1. Command Registry (substituiu monolito de 400 linhas)
 - `core/commands.py`: `CommandRegistry` com decorators `@registry.register_intent()`
 - `core/handlers.py`: 22 handlers migrados (weather, desktop, scheduler, etc)
-- `core/jarvis.py`: `_execute_intent()` reduzido de ~400 para ~20 linhas
+- `core/aris.py`: `_execute_intent()` reduzido de ~400 para ~20 linhas
 - Cada handler recebe `action`, `params`, `**ctx` (instâncias dos módulos)
-- Novo módulo = novo arquivo em `plugins/`, zero edição em jarvis.py
+- Novo módulo = novo arquivo em `plugins/`, zero edição em aris.py
 
 ### 2. Plugin System
 - `core/module_manager.py`: Auto-load de `plugins/*.py` + `modules/*.py`
@@ -42,9 +42,9 @@ Sou o desenvolvedor do J.A.R.V.I.S., um assistente pessoal via terminal em Pytho
 
 ## Arquitetura atual
 ```
-JARVIS/
+ARIS/
 ├── core/
-│   ├── jarvis.py          # Orquestrador (418 linhas)
+│   ├── aris.py          # Orquestrador (418 linhas)
 │   ├── commands.py        # Registry + safety hook
 │   ├── handlers.py        # 22 intent handlers
 │   ├── advanced_interpreter.py  # NLU multi-comando

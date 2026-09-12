@@ -1,4 +1,4 @@
-"""Modelos de dados do sistema de memória do J.A.R.V.I.S.
+"""Modelos de dados do sistema de memória do A.R.I.S.
 
 Define as estruturas de dados para armazenamento de memórias.
 """

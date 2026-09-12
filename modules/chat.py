@@ -1,4 +1,4 @@
-"""Módulo de chat do J.A.R.V.I.S.
+"""Módulo de chat do A.R.I.S.
 
 Gerencia conversas com o modelo de linguagem via Groq API.
 Suporta RAG (injeção de memórias relevantes no contexto).
@@ -8,7 +8,7 @@ import os
 from typing import TYPE_CHECKING
 from openai import OpenAI
 
-from config.personality import JARVIS_PERSONALITY
+from config.personality import ARIS_PERSONALITY
 from utils.logger import Logger
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ class Chat:
         self._history: list[dict[str, str]] = []
         self._memory = memory
 
-        self._system_prompt = system_prompt or JARVIS_PERSONALITY
+        self._system_prompt = system_prompt or ARIS_PERSONALITY
 
         if not api_key:
             if self._logger:

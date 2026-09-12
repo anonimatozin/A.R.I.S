@@ -1,4 +1,4 @@
-"""Skills System - Sistema de Habilidades do J.A.R.V.I.S.
+"""Skills System - Sistema de Habilidades do A.R.I.S.
 
 Skills são pacotes reutilizáveis de funcionalidades.
 Inspirado em OpenClaw ClawHub.
@@ -18,7 +18,7 @@ class Skill:
     name: str
     description: str
     category: str
-    author: str = "J.A.R.V.I.S."
+    author: str = "A.R.I.S."
     version: str = "1.0.0"
     instructions: str = ""
     tools: list[str] = field(default_factory=list)
@@ -177,7 +177,7 @@ class SkillsSystem:
         tools: Optional[list[str]] = None,
         examples: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
-        author: str = "J.A.R.V.I.S.",
+        author: str = "A.R.I.S.",
         version: str = "1.0.0",
     ) -> Skill:
         """Registra uma nova skill."""

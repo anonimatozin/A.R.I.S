@@ -1,4 +1,4 @@
-"""Sistema de Interpretacao de Intencao do J.A.R.V.I.S.
+"""Sistema de Interpretacao de Intencao do A.R.I.S.
 
 Analisa a mensagem do operador e extrai intencoes para executar modulos.
 """

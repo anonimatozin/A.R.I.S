@@ -1,7 +1,7 @@
-"""Auto-Redaction - Proteção de Dados Sensíveis do J.A.R.V.I.S.
+"""Auto-Redaction - Proteção de Dados Sensíveis do A.R.I.S.
 
 Remove automaticamente emails, tokens, senhas e dados sensíveis.
-Inspirado em isair/jarvis.
+Inspirado em isair/aris.
 """
 
 import re

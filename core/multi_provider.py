@@ -1,4 +1,4 @@
-"""Multi-Provider IA do J.A.R.V.I.S.
+"""Multi-Provider IA do A.R.I.S.
 
 Suporta múltiplos provedores de IA com fallback automático:
 Groq, Google Gemini, Ollama (local).
@@ -46,7 +46,7 @@ class MultiProviderChat:
         if groq_key:
             try:
                 client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-                model = os.getenv("JARVIS_CHAT_MODEL", "llama-3.3-70b-versatile")
+                model = os.getenv("ARIS_CHAT_MODEL", "llama-3.3-70b-versatile")
                 self._providers.append(AIProvider("groq", client, model))
                 if self._logger:
                     self._logger.info(f"Provider Groq inicializado: {model}")

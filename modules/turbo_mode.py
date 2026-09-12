@@ -1,4 +1,4 @@
-"""Turbo Mode - Análise Profunda do J.A.R.V.I.S.
+"""Turbo Mode - Análise Profunda do A.R.I.S.
 
 Modo de análise aprofundada de arquivos, código e imagens.
 """

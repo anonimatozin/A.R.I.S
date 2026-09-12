@@ -1,4 +1,4 @@
-"""Configuração do ESP32 para J.A.R.V.I.S.
+"""Configuração do ESP32 para A.R.I.S.
 
 Configuração centralizada para comunicação e hardware.
 Tudo vem de env vars para não ter GPIOs no código.

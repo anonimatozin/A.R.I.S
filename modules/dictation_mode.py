@@ -1,7 +1,7 @@
-"""Dictation Mode - Modo Dictação do J.A.R.V.I.S.
+"""Dictation Mode - Modo Dictação do A.R.I.S.
 
 Segure uma tecla, fale, e o texto aparece em qualquer lugar.
-Inspirado em isair/jarvis e akshayaggarwal99/jarvis-ai-assistant.
+Inspirado em isair/aris e akshayaggarwal99/aris-ai-assistant.
 """
 
 import threading

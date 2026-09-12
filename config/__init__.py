@@ -1,4 +1,4 @@
-"""Configuração do projeto J.A.R.V.I.S.
+"""Configuração do projeto A.R.I.S.
 
 Este módulo expõe a classe Settings para uso global.
 """

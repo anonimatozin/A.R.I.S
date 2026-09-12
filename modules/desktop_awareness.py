@@ -1,7 +1,7 @@
-"""Desktop Awareness - Captura de Tela + OCR do J.A.R.V.I.S.
+"""Desktop Awareness - Captura de Tela + OCR do A.R.I.S.
 
 Monitora a tela em tempo real e extrai informações via OCR.
-Inspirado em vierisid/jarvis e isair/jarvis.
+Inspirado em vierisid/aris e isair/aris.
 """
 
 import os

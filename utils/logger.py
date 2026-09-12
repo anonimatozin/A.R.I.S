@@ -1,4 +1,4 @@
-"""Sistema de logs do J.A.R.V.I.S.
+"""Sistema de logs do A.R.I.S.
 
 Gerencia registro de eventos com suporte a rotação de arquivos.
 """
@@ -21,7 +21,7 @@ class Logger:
 
     def __init__(
         self,
-        name: str = "jarvis",
+        name: str = "aris",
         log_dir: Path | None = None,
         level: str = "INFO",
         max_size_mb: int = 10,
@@ -48,7 +48,7 @@ class Logger:
     def _setup_file_handler(self, log_dir: Path, max_size_mb: int) -> None:
         """Configura o handler de arquivo com rotação."""
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "jarvis.log"
+        log_file = log_dir / "aris.log"
 
         handler = RotatingFileHandler(
             log_file,

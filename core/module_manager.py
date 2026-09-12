@@ -1,4 +1,4 @@
-"""Sistema de gerenciamento de módulos do J.A.R.V.I.S.
+"""Sistema de gerenciamento de módulos do A.R.I.S.
 
 Responsável por carregar, descarregar e gerenciar módulos do sistema.
 Suporta módulos internos (modules/) e plugins externos (plugins/).

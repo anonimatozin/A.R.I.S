@@ -1,4 +1,4 @@
-"""Testes do Hardware Manager do J.A.R.V.I.S.
+"""Testes do Hardware Manager do A.R.I.S.
 
 Testes unitários para o módulo ESP32.
 """

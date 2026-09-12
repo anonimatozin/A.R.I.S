@@ -1,7 +1,7 @@
-"""Multi-Agent - Delegação de Tarefas do J.A.R.V.I.S.
+"""Multi-Agent - Delegação de Tarefas do A.R.I.S.
 
 Sistema de agentes especializados com delegação.
-Inspirado em OpenClaw e vierisid/jarvis.
+Inspirado em OpenClaw e vierisid/aris.
 """
 
 import json

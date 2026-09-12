@@ -1,4 +1,4 @@
-"""Desktop Tools - Controle total do desktop do J.A.R.V.I.S.
+"""Desktop Tools - Controle total do desktop do A.R.I.S.
 
 Ferramentas para automação: mouse, teclado, janelas, mídia, clipboard.
 """

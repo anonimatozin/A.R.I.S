@@ -1,4 +1,4 @@
-"""Safety Tiers - Sistema de Segurança do J.A.R.V.I.S.
+"""Safety Tiers - Sistema de Segurança do A.R.I.S.
 
 Define níveis de permissão para ações perigosas.
 """

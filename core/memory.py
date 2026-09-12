@@ -1,4 +1,4 @@
-"""Gerenciador de memória do J.A.R.V.I.S.
+"""Gerenciador de memória do A.R.I.S.
 
 Sistema central de armazenamento, recuperação e busca de memórias.
 """
@@ -19,7 +19,7 @@ class MemoryManager:
     """Gerenciador central do sistema de memória.
 
     Responsável por armazenar, recuperar, buscar e gerenciar
-    todas as memórias do J.A.R.V.I.S.
+    todas as memórias do A.R.I.S.
     """
 
     INDEX_FILE = "memory_index.json"
@@ -34,7 +34,7 @@ class MemoryManager:
         """
         self._logger = logger
         self._memories: dict[str, MemoryEntry] = {}
-        self._memory_dir = memory_root or Path("E:\\JARVIS_MEMORY")
+        self._memory_dir = memory_root or (Path(__file__).resolve().parent.parent / "data" / "memory")
         self._index_path = self._memory_dir / self.METADATA_DIR / self.INDEX_FILE
 
         self._setup_directories()

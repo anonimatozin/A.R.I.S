@@ -1,4 +1,4 @@
-# J.A.R.V.I.S. — PROMPT-MESTRE (Documento de Contexto Completo)
+# A.R.I.S. — PROMPT-MESTRE (Documento de Contexto Completo)
 # Versão: 1.0.0 | Data: 07/08/2026
 # Uso: Cole este documento inteiro em uma segunda IA para gerar sugestões de evolução.
 
@@ -6,13 +6,13 @@
 
 ## PARTE 1 — VISÃO GERAL DO PROJETO
 
-**Nome:** J.A.R.V.I.S. (Just A Rather Very Intelligent System)
-**Localização:** `C:\Users\Administrator\Documents\JARVIS`
+**Nome:** A.R.I.S. (Just A Rather Very Intelligent System)
+**Localização:** `C:\Users\Administrator\Documents\ARIS`
 **Plataforma:** Windows 10/11, Python 3.12
 **Tipo:** Assistente de IA via terminal com controle total do PC
 **Versão:** 1.0.0
 **Linguagem primária:** Português do Brasil (PT-BR)
-**Repositório de referência:** `jarvis-nexus` (anonimatozin/jarvis-nexus v24.0) — clonado localmente mas o projeto é só "JARVIS", sem "NEXUS"
+**Repositório de referência:** `aris-nexus` (anonimatozin/jarvis-nexus v24.0) — clonado localmente mas o projeto é só "ARIS", sem "NEXUS"
 
 **Objetivo:** Assistente pessoal via terminal que controla o PC por voz/texto, gerencia tarefas, pesquisa, automação, e se auto-evolui.
 
@@ -21,12 +21,12 @@
 ## PARTE 2 — ARQUITETURA ATUAL
 
 ```
-JARVIS/
+ARIS/
 ├── main.py                    # Entry point
 ├── requirements.txt           # Dependências
 ├── .env                       # Chaves de API (GROQ, OPENWEATHER, WEATHERAPI, SERPAPI)
 ├── core/                      # Núcleo do sistema
-│   ├── jarvis.py              # Orquestrador principal (733 linhas)
+│   ├── aris.py              # Orquestrador principal (733 linhas)
 │   ├── advanced_interpreter.py # NLU multi-comando
 │   ├── multi_provider.py      # Fallback Groq → Gemini → Ollama
 │   ├── intent.py              # Intent analyzer legado (fallback)
@@ -56,7 +56,7 @@ JARVIS/
 │   ├── settings.py            # Dataclass de configuração
 │   └── personality.py         # System prompt da personalidade
 ├── utils/
-│   ├── terminal.py            # Terminal UI + JarvisUI (ASCII art)
+│   ├── terminal.py            # Terminal UI + ArisUI (ASCII art)
 │   ├── voice.py               # TTS Windows SAPI
 │   ├── voice_hybrid.py        # edge-tts + pyttsx3 + STT
 │   └── logger.py              # Logger rotativo
@@ -69,7 +69,7 @@ JARVIS/
 ├── security/                  # (vazio, módulo futuro)
 ├── automation/                # (vazio, módulo futuro)
 ├── analytics/                 # (vazio, módulo futuro)
-└── jarvis-nexus/              # Repositório de referência clonado
+└── aris-nexus/              # Repositório de referência clonado
 ```
 
 ---
@@ -139,7 +139,7 @@ numpy>=1.24.0
 
 ### 5.1 CORE (Núcleo)
 
-#### `core/jarvis.py` — Orquestrador Principal (733 linhas)
+#### `core/aris.py` — Orquestrador Principal (733 linhas)
 - Inicializa 25+ módulos
 - Loop principal: lê input → interpreta → executa → responde
 - `_execute_intent()` é um monolito de ~400 linhas com TODOS os comandos hardcoded
@@ -234,7 +234,7 @@ numpy>=1.24.0
 
 #### `modules/browser_automation.py` (NOVO)
 - Playwright: abrir, clicar, preencher, screenshot
-- Problema: async não integrado no loop síncrono do jarvis.py
+- Problema: async não integrado no loop síncrono do aris.py
 
 #### `modules/multi_agent.py` (NOVO)
 - Agentes: researcher, coder, analyst, writer
@@ -255,7 +255,7 @@ numpy>=1.24.0
 
 #### `utils/terminal.py`
 - `Terminal`: cls, print_colorido, print_erro, print_sucesso, print_aviso, input_colorido
-- `JarvisUI`: banner ASCII art, prompt estilizado, indicadores de ação
+- `ArisUI`: banner ASCII art, prompt estilizado, indicadores de ação
 
 #### `utils/voice.py`
 - Windows SAPI TTS
@@ -334,8 +334,8 @@ numpy>=1.24.0
 | `skill [nome]`                            | skills_system.py  |
 | `ditado`                                  | dictation_mode.py |
 | `limpar memória`                          | memory.py         |
-| `voz on/off`                              | jarvis.py         |
-| `sair`                                    | jarvis.py         |
+| `voz on/off`                              | aris.py         |
+| `sair`                                    | aris.py         |
 
 ---
 
@@ -343,7 +343,7 @@ numpy>=1.24.0
 
 ### 7.1 Problemas Críticos
 1. **`_execute_intent()` monolítico** — ~400 linhas, difícil de manter
-2. **Sem wake word** — precisa digitar "jarvis" ou usar atalho
+2. **Sem wake word** — precisa digitar "aris" ou usar atalho
 3. **Sem GUI** — apenas terminal (removido o HUD)
 4. **Sem ESP32 integration** — hardware não integrado
 5. **Sem streaming de respostas** — resposta aparece tudo de uma vez
@@ -375,7 +375,7 @@ numpy>=1.24.0
 ## PARTE 8 — COMPARAÇÃO COM REFERÊNCIAS (GitHub)
 
 ### Referência: anonimatozin/jarvis-nexus (v24.0)
-O que a referência TEM e o JARVIS atual NÃO tem:
+O que a referência TEM e o ARIS atual NÃO tem:
 - GUI Qt5 (HUD com orb animada, painéis, abas)
 - Wake word detection (porrona/snowboy)
 - Visão por computador (webcam + YOLO)
@@ -417,7 +417,7 @@ O que a referência TEM e o JARVIS atual NÃO tem:
 6. **NÃO copiar códigos de referência** — adaptar conceitos, não copiar
 7. **NÃO quebrar compatibilidade** — manter comandos existentes funcionando
 8. **NÃO usar APIs pagas sem fallback** — sempre ter plano B
-9. **NÃO deixar módulos sem integração** — todo módulo novo deve ser chamado pelo jarvis.py
+9. **NÃO deixar módulos sem integração** — todo módulo novo deve ser chamado pelo aris.py
 10. **NÃO esquecer do prompt-mestre** — toda evolução deve ser documentada
 
 ---
@@ -450,14 +450,14 @@ O que a referência TEM e o JARVIS atual NÃO tem:
 - [ ] Context detector que AFETA comportamento
 - [ ] Safety que REALMENTE bloqueia
 - [ ] Multi-agent com LLM real
-- [ ] Auto-redesign: Jarvis sugere melhorias para si mesmo
+- [ ] Auto-redesign: Aris sugere melhorias para si mesmo
 - [ ] Mood detector baseado em padrões de uso
 
 ---
 
 ## PARTE 11 — PERSONALIDADE E COMPORTAMENTO
 
-**Nome:** J.A.R.V.I.S.
+**Nome:** A.R.I.S.
 **Estilo:** Assistente inteligente, direto, útil, com personalidade levemente sarcástica
 **Língua:** Português do Brasil (PT-BR)
 **Tom:** Profissional mas amigável
@@ -522,7 +522,7 @@ Para a segunda IA:
 ## PARTE 15 — ESTRUTURA DE DIRETÓRIOS DETALHADA
 
 ```
-C:\Users\Administrator\Documents\JARVIS\
+C:\Users\Administrator\Documents\ARIS\
 ├── main.py
 ├── requirements.txt
 ├── .env
@@ -530,7 +530,7 @@ C:\Users\Administrator\Documents\JARVIS\
 ├── PROMPT_MESTRE.md
 ├── core/
 │   ├── __init__.py
-│   ├── jarvis.py
+│   ├── aris.py
 │   ├── advanced_interpreter.py
 │   ├── multi_provider.py
 │   ├── intent.py
@@ -582,7 +582,7 @@ C:\Users\Administrator\Documents\JARVIS\
 │   └── __init__.py
 ├── analytics/
 │   └── __init__.py
-└── jarvis-nexus/ (referência, NÃO modificar)
+└── aris-nexus/ (referência, NÃO modificar)
 ```
 
 ---
@@ -590,7 +590,7 @@ C:\Users\Administrator\Documents\JARVIS\
 ## PARTE 16 — COMANDOS DE EXECUÇÃO
 
 ```bash
-# Executar JARVIS
+# Executar ARIS
 python main.py
 
 # Executar com flags
@@ -635,5 +635,5 @@ pytest tests/
 
 ---
 
-*Documento gerado em 07/08/2026 por J.A.R.V.I.S. para uso como contexto de segunda IA.*
+*Documento gerado em 07/08/2026 por A.R.I.S. para uso como contexto de segunda IA.*
 *Versão: 1.0.0*

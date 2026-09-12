@@ -1,4 +1,4 @@
-"""Entretenimento do J.A.R.V.I.S.
+"""Entretenimento do A.R.I.S.
 
 Piadas, curiosidades, frases motivacionais, jogos simples.
 """

@@ -3,11 +3,11 @@
 Analisa o que o operador está fazendo e adapta respostas.
 """
 
-import psutil
 import time
-from typing import Optional
 from dataclasses import dataclass
 from enum import Enum
+
+import psutil
 
 
 class ActivityType(Enum):
@@ -37,7 +37,7 @@ class ContextDetector:
     def __init__(self):
         self._last_check = 0
         self._cache_duration = 2  # segundos
-        self._cached_context: Optional[ContextInfo] = None
+        self._cached_context: ContextInfo | None = None
 
         # Processos conhecidos
         self._process_map = {

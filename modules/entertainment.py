@@ -3,17 +3,15 @@
 Piadas, curiosidades, frases motivacionais, jogos simples.
 """
 
-import random
 import json
+import random
 from pathlib import Path
-from typing import Optional
-from datetime import datetime
 
 
 class Entertainment:
     """Módulo de entretenimento."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._jokes = self._load_jokes()
         self._curiosities = self._load_curiosities()
@@ -94,7 +92,7 @@ class Entertainment:
         if self._data_dir:
             game_file = self._data_dir / "guess_game.json"
             game_file.write_text(json.dumps({"number": number, "attempts": 0}), encoding="utf-8")
-        return f"🎯 Pensei em um número de 1 a 100. Tente adivinhar! (Digite o número)"
+        return "🎯 Pensei em um número de 1 a 100. Tente adivinhar! (Digite o número)"
 
     def check_guess(self, guess: int) -> str:
         """Verifica um palpite."""

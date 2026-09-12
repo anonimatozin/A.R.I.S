@@ -5,7 +5,6 @@ Inspirado em isair/aris.
 """
 
 import re
-from typing import Optional
 
 
 class AutoRedaction:
@@ -48,7 +47,7 @@ class AutoRedaction:
     def __init__(self):
         self._stats = {k: 0 for k in self.PATTERNS}
 
-    def redact(self, text: str, custom_patterns: Optional[dict] = None) -> str:
+    def redact(self, text: str, custom_patterns: dict | None = None) -> str:
         """Remove dados sensíveis de um texto.
 
         Args:
@@ -133,7 +132,7 @@ class AutoRedaction:
         stats = self.get_stats()
         total = sum(stats.values())
         lines = [
-            f"🔒 Auto-Redaction Report",
+            "🔒 Auto-Redaction Report",
             f"   Total redações: {total}",
         ]
         for dtype, count in sorted(stats.items(), key=lambda x: x[1], reverse=True):

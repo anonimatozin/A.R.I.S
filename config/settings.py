@@ -4,8 +4,8 @@ Carrega configurações de variáveis de ambiente e arquivos .env.
 """
 
 import os
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv

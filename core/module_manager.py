@@ -6,7 +6,6 @@ Suporta módulos internos (modules/) e plugins externos (plugins/).
 
 import importlib
 import importlib.util
-import pkgutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -36,15 +35,33 @@ class ModuleManager:
     - Módulos do diretório modules/
     - Plugins do diretório plugins/
 
-    Cada plugin pode ter uma função register(registry) que é chamada
-    ao carregar, permitindo auto-registro via @registry.register_intent().
+    Registro explícito (DI):
+    Módulos cujos construtores possuem dependências reais (contextos,
+    credenciais, pastas de dados) NÃO são instanciados por heurística.
+    Eles são fornecidos pela aplicação através do container
+    (``register_services``) e registrados aqui explicitamente — nada
+    de aliases/gambiarras por nome de classe.
     """
+
+    # Nome do módulo → chave do serviço no container.
+    # Módulos com dependências são instanciados pelo ARIS e
+    # registrados no container central.
+    DI_MODULE_BINDINGS: dict[str, str] = {
+        "chat": "modules.chat",
+        "knowledge_graph": "modules.knowledge",
+        "scheduler": "modules.scheduler",
+        "notifications": "modules.notifications",
+        "safety": "modules.safety",
+        "multi_agent": "modules.agents",
+        "esp32_hardware": "modules.hardware",
+    }
 
     def __init__(self, modules_dir: Path, plugins_dir: Path, logger: Logger) -> None:
         self._modules_dir = modules_dir
         self._plugins_dir = plugins_dir
         self._logger = logger
         self._modules: dict[str, ModuleInfo] = {}
+        self._container = None
 
     @property
     def loaded_modules(self) -> dict[str, ModuleInfo]:
@@ -54,11 +71,20 @@ class ModuleManager:
     def module_count(self) -> int:
         return len(self._modules)
 
-    def load_modules(self) -> None:
-        """Carrega módulos internos e plugins externos."""
+    def load_modules(self, container=None) -> None:
+        """Carrega módulos internos e plugins externos.
+
+        Args:
+            container: Container de dependências (DI). Quando presente,
+                módulos regidos por ``register_services`` são carregados
+                explicitamente a partir dele.
+        """
+        self._container = container
         self._logger.info("Carregando módulos e plugins...")
         self._load_internal_modules()
         self._load_plugins()
+        if container is not None:
+            self._register_di_modules()
         self._logger.info(f"Total carregado: {self.module_count} ({self.plugin_count} plugins)")
 
     @property
@@ -102,6 +128,15 @@ class ModuleManager:
         if is_plugin:
             self._try_plugin_register(module, name)
 
+        # Hook DI: módulo pode publicar serviços no container
+        if self._container is not None:
+            self._try_register_services(module, name)
+
+        # Módulo regido por DI: instância fornecida pela aplicação
+        if name in self.DI_MODULE_BINDINGS:
+            self._logger.debug(f"Módulo '{name}': registro via injeção de dependências (DI).")
+            return
+
         # Criar instância
         instance = self._create_module_instance(module, name)
         if instance is not None:
@@ -143,6 +178,36 @@ class ModuleManager:
                 self._logger.debug(f"Plugin '{name}' registrado via register().")
         except Exception as e:
             self._logger.warning(f"Plugin '{name}' não pôde se auto-registrar: {e}")
+
+    def _try_register_services(self, module: Any, name: str) -> None:
+        """Chama o hook ``register_services(container)`` se existir.
+
+        Hook oficial de injeção de dependências: o módulo publica seus
+        serviços no container central.
+        """
+        try:
+            register_fn = getattr(module, "register_services", None)
+            if callable(register_fn):
+                register_fn(self._container)
+                self._logger.debug(f"Módulo '{name}' registrou serviços via register_services().")
+        except Exception as e:
+            self._logger.warning(f"Módulo '{name}' não pôde registrar serviços: {e}")
+
+    def _register_di_modules(self) -> None:
+        """Registra módulos instanciados pela aplicação (DI explícita).
+
+        Resolve a instância do container e a expõe ao ModuleManager,
+        de forma que o gerenciador reflita o sistema real.
+        """
+        for module_name, service_key in self.DI_MODULE_BINDINGS.items():
+            if module_name in self._modules:
+                continue
+            instance = self._container.get(service_key) if self._container else None
+            if instance is not None:
+                self._modules[module_name] = ModuleInfo(name=module_name, instance=instance)
+                self._logger.info(f"Módulo '{module_name}' carregado via DI (container).")
+            else:
+                self._logger.warning(f"Módulo '{module_name}' indisponível no container (DI).")
 
     # ── Instance creation ───────────────────────────────────
 

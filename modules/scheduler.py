@@ -6,11 +6,11 @@ Gerencia lembretes, tarefas agendadas e pomodoro.
 import json
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Optional, Callable
-from dataclasses import dataclass, field, asdict
 from enum import Enum
+from pathlib import Path
 
 
 class TaskPriority(Enum):
@@ -38,8 +38,8 @@ class ScheduledTask:
     task_type: str  # "reminder", "recurring", "pomodoro"
     priority: TaskPriority = TaskPriority.MEDIUM
     status: TaskStatus = TaskStatus.PENDING
-    recurring_interval: Optional[int] = None  # minutos
-    callback_data: Optional[str] = None
+    recurring_interval: int | None = None  # minutos
+    callback_data: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -57,13 +57,13 @@ class PomodoroTimer:
         self.long_break = long_break
         self._running = False
         self._paused = False
-        self._thread: Optional[threading.Thread] = None
-        self._on_tick: Optional[Callable] = None
-        self._on_complete: Optional[Callable] = None
+        self._thread: threading.Thread | None = None
+        self._on_tick: Callable | None = None
+        self._on_complete: Callable | None = None
         self._current_session = 0
         self._total_sessions = 4
 
-    def start(self, on_tick: Optional[Callable] = None, on_complete: Optional[Callable] = None) -> str:
+    def start(self, on_tick: Callable | None = None, on_complete: Callable | None = None) -> str:
         """Inicia um pomodoro."""
         if self._running:
             return "Pomodoro já em andamento"
@@ -149,7 +149,7 @@ class Scheduler:
         self._tasks_file = data_dir / "scheduled_tasks.json"
         self._tasks: list[ScheduledTask] = []
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._callbacks: dict[str, Callable] = {}
         self._pomodoro = PomodoroTimer()
 
@@ -238,7 +238,7 @@ class Scheduler:
         """Retorna número de tarefas pendentes."""
         return len([t for t in self._tasks if t.status == TaskStatus.PENDING])
 
-    def start_checker(self, callback: Optional[Callable] = None) -> None:
+    def start_checker(self, callback: Callable | None = None) -> None:
         """Inicia o verificador de tarefas em background."""
         self._running = True
         self._thread = threading.Thread(target=self._check_loop, args=(callback,), daemon=True)
@@ -248,7 +248,7 @@ class Scheduler:
         """Para o verificador."""
         self._running = False
 
-    def _check_loop(self, callback: Optional[Callable] = None) -> None:
+    def _check_loop(self, callback: Callable | None = None) -> None:
         """Loop de verificação de tarefas."""
         while self._running:
             now = datetime.now()

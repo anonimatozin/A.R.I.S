@@ -6,10 +6,9 @@ Inspirado em isair/aris e vierisid/aris.
 
 import json
 import re
-from pathlib import Path
-from typing import Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 
 @dataclass
@@ -110,7 +109,7 @@ class KnowledgeGraph:
         self,
         name: str,
         entity_type: str,
-        properties: Optional[dict] = None,
+        properties: dict | None = None,
     ) -> Entity:
         """Adiciona uma entidade ao grafo."""
         # Verificar se já existe
@@ -137,7 +136,7 @@ class KnowledgeGraph:
         self._save()
         return entity
 
-    def get_entity(self, name: str) -> Optional[Entity]:
+    def get_entity(self, name: str) -> Entity | None:
         """Busca uma entidade pelo nome."""
         name_lower = name.lower()
         ids = self._entity_index.get(name_lower, [])
@@ -170,8 +169,8 @@ class KnowledgeGraph:
         source_name: str,
         target_name: str,
         relation_type: str,
-        properties: Optional[dict] = None,
-    ) -> Optional[Relation]:
+        properties: dict | None = None,
+    ) -> Relation | None:
         """Adiciona um relacionamento entre duas entidades."""
         source = self.get_entity(source_name)
         target = self.get_entity(target_name)
@@ -242,7 +241,7 @@ class KnowledgeGraph:
         content: str,
         source: str = "conversation",
         confidence: float = 1.0,
-    ) -> Optional[Fact]:
+    ) -> Fact | None:
         """Adiciona um fato sobre uma entidade."""
         entity = self.get_entity(entity_name)
         if not entity:
@@ -292,7 +291,7 @@ class KnowledgeGraph:
             for match in matches:
                 name = match.group(1).strip()
                 if len(name) > 1:
-                    entity = self.add_entity(name, entity_type, {"tag": tag})
+                    self.add_entity(name, entity_type, {"tag": tag})
                     extracted["entities"].append({"name": name, "type": entity_type})
 
         # Padrões para relacionamentos
@@ -362,7 +361,7 @@ class KnowledgeGraph:
         """Formata um resumo do grafo."""
         stats = self.get_stats()
         lines = [
-            f"🧠 Knowledge Graph",
+            "🧠 Knowledge Graph",
             f"   Entidades: {stats['entities']}",
             f"   Relacionamentos: {stats['relations']}",
             f"   Fatos: {stats['facts']}",

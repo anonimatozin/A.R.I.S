@@ -14,31 +14,41 @@ Assistente virtual inspirado no conceito de A.R.I.S., construído com foco em mo
 ```
 Aris/
 ├── main.py                 # Ponto de entrada principal
-├── requirements.txt        # Dependências do projeto
+├── requirements.txt        # Dependências do projeto (runtime + dev)
+├── pyproject.toml          # Metadata + ferramentas (ruff, pytest, mypy)
 ├── .env.example            # Variáveis de ambiente (modelo)
 ├── config/                 # Sistema de configuração
 │   ├── __init__.py
 │   └── settings.py         # Classe Settings
 ├── core/                   # Componentes centrais
 │   ├── __init__.py
-│   ├── aris.py           # Classe principal Aris
-│   ├── module_manager.py   # Gerenciador de módulos
-│   └── commands.py         # Sistema de comandos
-├── modules/                # Módulos do sistema
-│   ├── __init__.py
-│   ├── help.py             # Comando help
-│   ├── clear.py            # Comando clear
-│   ├── status.py           # Comando status
-│   ├── version.py          # Comando version
-│   └── exit.py             # Comando exit
+│   ├── aris.py             # Classe principal Aris (orquestrador)
+│   ├── module_manager.py   # Gerenciador de módulos (com DI)
+│   ├── commands.py         # Sistema de comandos (Registry)
+│   ├── memory.py           # Memória de longo prazo (JSON)
+│   ├── services/           # Service Container + Event Bus
+│   └── neural/             # Neural Core (arquitetura cognitiva)
+│       ├── core.py         # Orquestrador do pipeline cognitivo
+│       ├── events.py / event_bus.py
+│       ├── state.py        # GlobalState
+│       ├── memory/         # WorkingMemory + Episódica/Procedural
+│       ├── attention/      # Filtro de atenção
+│       ├── context/        # Construtor de contexto
+│       ├── reasoning/      # Reasoning Router (determinístico/LLM)
+│       ├── decision/       # Decisões com nível de risco
+│       ├── security/       # Security Gate (allowlist)
+│       ├── actions/        # Executor de ações
+│       ├── feedback/       # Feedback e aprendizado
+│       ├── planning/       # Planner multi-etapas
+│       └── learning/       # Experience Store
+├── modules/                # 17 módulos (chat, desktop, scheduler,
+│                           # notifications, safety, ESP32, ...)
 ├── plugins/                # Plugins de terceiros
-├── utils/                  # Utilitários
-│   ├── __init__.py
-│   ├── logger.py           # Sistema de logs
-│   └── terminal.py         # Utilitários de terminal
+├── utils/                  # Utilitários (logger, terminal, voz)
+├── firmware/esp32_aris/    # Firmware ESP32 (.ino + credentials.h)
 ├── logs/                   # Arquivos de log
 ├── data/                   # Dados persistentes
-├── tests/                  # Testes automatizados
+├── tests/                  # Testes pytest
 └── assets/                 # Recursos estáticos
 ```
 
@@ -48,15 +58,20 @@ Aris/
 python main.py
 ```
 
+Para desenvolvimento:
+
+```bash
+pip install -r requirements.txt
+python -m pytest tests/        # rodar a suíte de testes
+python -m ruff check core/ modules/ plugins/ utils/ tests/ config/
+```
+
 ## Comandos Disponíveis
 
-| Comando   | Descrição                          |
-|-----------|------------------------------------|
-| `help`    | Exibe a lista de comandos          |
-| `clear`   | Limpa a tela do terminal           |
-| `status`  | Exibe o status do sistema          |
-| `version` | Exibe a versão do sistema          |
-| `exit`    | Encerra o sistema                  |
+Além do diálogo em linguagem natural, comandos diretos estão registrados
+via `CommandRegistry` (listáveis com `help`): `chat`, `pesquisar`, `clima`,
+`abrir`, `status`, `sistema`, `memoria`, `turbo`, `navegar`, `agente`,
+`skill`, `ditado`, `sair`, e integração ESP32/hardware.
 
 ## Configuração
 
@@ -80,16 +95,25 @@ O projeto segue uma arquitetura modular com separação clara de responsabilidad
 
 - **config/**: Configurações centralizadas carregadas de variáveis de ambiente.
 - **core/**: Componentes centrais (Aris, ModuleManager, CommandRegistry).
-- **modules/**: Módulos independentes que estendem funcionalidades.
+- **core/neural/**: Neural Core — pipeline cognitivo híbrido (determinístico
+  + LLM under demanda), com atenção, contexto, reasoning, decisão com risco,
+  security gate, planner e feedback que alimenta a memória episódica/procedural.
+- **core/services/**: Service Container (DI) + Event Bus.
+- **modules/**: 17 módulos independentes (chat, desktop tools, scheduler,
+  notificações, ESP32, ...), carregados via ModuleManager com injeção de
+  dependência explícita.
 - **plugins/**: Diretório reservado para plugins de terceiros.
-- **utils/**: Utilitários reutilizáveis (logger, terminal).
+- **utils/**: Utilitários reutilizáveis (logger, terminal, voz híbrida).
+- **firmware/esp32_aris/**: Firmware do ESP32; credenciais WiFi ficam fora do
+  versionamento (em `credentials.h`, gitignored).
 
 ### Adicionando Novos Módulos
 
 1. Crie um arquivo Python em `modules/`.
 2. Defina uma classe com o nome em PascalCase do arquivo.
 3. Implemente o método `execute()`.
-4. O módulo será carregado automaticamente na próxima inicialização.
+4. O módulo será carregado automaticamente na próxima inicialização
+   (ou registrado via DI pelo ModuleManager).
 
 ### Adicionando Novos Comandos
 

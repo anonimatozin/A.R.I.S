@@ -3,17 +3,21 @@
 Testes unitários para o módulo ESP32.
 """
 
+import asyncio
 import json
 import time
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from pathlib import Path
 
 from config.esp32_config import ESP32Config
 from modules.esp32_hardware import (
-    HardwareManager, SystemState, LEDColor, STATE_COLORS, BUTTON_ACTIONS,
+    BUTTON_ACTIONS,
+    STATE_COLORS,
+    HardwareManager,
+    LEDColor,
+    SystemState,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────
 
@@ -192,21 +196,21 @@ class TestMessages:
         hw_manager.start()
 
         msg = json.dumps({"tipo": "button", "action": "single_click"})
-        hw_manager._on_message(msg)
+        asyncio.run(hw_manager._on_message(msg))
         time.sleep(0.1)
         callback.assert_called()
 
     def test_on_message_heartbeat(self, hw_manager):
         hw_manager.start()
         msg = json.dumps({"tipo": "heartbeat"})
-        hw_manager._on_message(msg)
+        asyncio.run(hw_manager._on_message(msg))
         assert hw_manager._last_heartbeat > 0
 
     def test_stats_increment(self, hw_manager):
         hw_manager.start()
         initial = hw_manager._stats["messages_received"]
         msg = json.dumps({"tipo": "button", "action": "single_click"})
-        hw_manager._on_message(msg)
+        asyncio.run(hw_manager._on_message(msg))
         assert hw_manager._stats["messages_received"] == initial + 1
 
 

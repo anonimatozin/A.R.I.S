@@ -4,48 +4,54 @@ Orquestra o funcionamento do sistema, gerenciando módulos,
 comandos e a interface do terminal.
 """
 
+import concurrent.futures
+import os
 import signal
 import sys
-import os
-import concurrent.futures
-from pathlib import Path
 
-from config.settings import Settings
+import core.handlers  # noqa: F401 — auto-registra todos os handlers
 from config.esp32_config import ESP32Config
-from core.module_manager import ModuleManager
-from core.intent import IntentAnalyzer, Intent
+from config.settings import Settings
 from core.advanced_interpreter import AdvancedInterpreter
 from core.commands import registry
-import core.handlers  # noqa: F401 — auto-registra todos os handlers
+from core.intent import Intent, IntentAnalyzer
 from core.memory import MemoryManager
+from core.memory_models import MemoryCategory
 from core.memory_organizer import MemoryOrganizer
-from core.memory_models import MemoryCategory, Priority
+from core.module_manager import ModuleManager
 from core.multi_provider import MultiProviderChat
-from modules.chat import Chat
-from modules.desktop_tools import DesktopTools
-from modules.scheduler import Scheduler, TaskPriority
-from modules.notifications import NotificationManager
-from modules.context_detector import ContextDetector
-from modules.safety import SafetyManager
-from modules.entertainment import Entertainment
-from modules.turbo_mode import TurboMode
-from modules.knowledge_graph import KnowledgeGraph
-from modules.desktop_awareness import DesktopAwareness
+from core.neural import NeuralCore
+from core.neural.events import (
+    EVENT_BOOT,
+    EVENT_SHUTDOWN,
+    EVENT_TIMER_FINISHED,
+    Event,
+)
+from core.services import ServiceContainer
 from modules.auto_redaction import AutoRedaction
-from modules.morning_digest import MorningDigest
 from modules.browser_automation import BrowserAutomation
-from modules.multi_agent import MultiAgentSystem
-from modules.skills_system import SkillsSystem
+from modules.chat import Chat
+from modules.context_detector import ContextDetector
+from modules.desktop_awareness import DesktopAwareness
+from modules.desktop_tools import DesktopTools
 from modules.dictation_mode import DictationMode
+from modules.entertainment import Entertainment
 from modules.esp32_hardware import HardwareManager, SystemState
-from system.analyzer import PersonalAnalyzer
-
-from weather.hyper_weather import HyperWeather
+from modules.knowledge_graph import KnowledgeGraph
+from modules.morning_digest import MorningDigest
+from modules.multi_agent import MultiAgentSystem
+from modules.notifications import NotificationManager
+from modules.safety import SafetyManager
+from modules.scheduler import Scheduler
+from modules.skills_system import SkillsSystem
+from modules.turbo_mode import TurboMode
 from search.hyper_search import HyperSearch
+from system.analyzer import PersonalAnalyzer
 from utils.logger import Logger
-from utils.terminal import Terminal, ArisUI
+from utils.terminal import ArisUI, Terminal
 from utils.voice import Voice
 from utils.voice_hybrid import HybridVoice
+from weather.hyper_weather import HyperWeather
 
 
 class Aris:
@@ -141,8 +147,44 @@ class Aris:
         # Conectar safety ao registry
         registry.set_safety(self._safety)
 
+        # Neural Core: container de serviços + núcleo cognitivo
+        self._container = ServiceContainer()
+        self._neural = NeuralCore.build(
+            command_registry=registry,
+            memory_manager=self._memory,
+            logger=self._logger,
+        )
+        self._neural.register_services(self._container)
+        self._neural.set_handler_context(self._build_handler_context)
+        self._register_module_services()
+
         self._running = False
         self._setup_signal_handlers()
+
+    def _register_module_services(self) -> None:
+        """Expõe os módulos existentes no container (injeção de serviços).
+
+        Cada módulo direto do ARIS pode se registrar no container via
+        ``register_services(container)`` — o padrão oficial para os 7
+        módulos que falhavam no ModuleManager (chat, knowledge_graph,
+        scheduler, notifications, safety, multi_agent, esp32_hardware).
+        """
+        for name, instance in (
+            ("modules.chat", self._chat),
+            ("modules.scheduler", self._scheduler),
+            ("modules.notifications", self._notifications),
+            ("modules.safety", self._safety),
+            ("modules.knowledge", self._knowledge),
+            ("modules.agents", self._agents),
+            ("modules.hardware", self._hardware),
+            ("modules.desktop", self._desktop),
+            ("modules.context", self._context),
+            ("modules.entertainment", self._entertainment),
+            ("modules.turbo", self._turbo),
+            ("memory", self._memory),
+            ("settings", self._settings),
+        ):
+            self._container.set(name, instance)
 
     def _setup_signal_handlers(self) -> None:
         """Configura handlers para sinais do sistema."""
@@ -180,6 +222,8 @@ class Aris:
             "voice": self._voice,
             "settings": self._settings,
             "hardware": self._hardware,
+            "event_bus": self._neural.event_bus,
+            "state": self._neural.state,
         }
 
         # Dados pré-computados para handlers que precisam
@@ -201,8 +245,9 @@ class Aris:
     def _execute_intent(self, intent: Intent) -> None:
         """Executa uma intenção detectada pela IA.
 
-        Delega para o CommandRegistry. Se o handler não existe,
-        cai no fallback legacy.
+        Delega para o CommandRegistry através do Neural Core (Security
+        Gate + Ação + Feedback). Se o handler não existe, cai no
+        fallback legacy.
         """
         module = intent.module
         params = intent.params
@@ -217,12 +262,10 @@ class Aris:
         # Tentar registry primeiro
         if registry.has_intent(module):
             ctx = self._build_handler_context()
-            result = registry.execute_intent(
-                module=module,
-                action=intent.action,
-                params=params,
-                **ctx,
-            )
+            decision = self._neural.decision.decide(intent, source="llm")
+            result = self._neural.execute(decision, ctx=ctx)
+            if not result.success and result.error.startswith("Segurança:"):
+                ArisUI.show_error(result.error)
             return
 
         # Fallback: módulos sem handler registrado ainda
@@ -230,8 +273,6 @@ class Aris:
 
     def _execute_intent_legacy(self, intent: Intent) -> None:
         """Fallback legado para módulos que ainda não foram migrados."""
-        module = intent.module
-        params = intent.params
 
     def _print_banner(self) -> None:
         """Exibe o banner inicial do sistema."""
@@ -241,8 +282,21 @@ class Aris:
         """Inicia o A.R.I.S."""
         self._logger.info("Iniciando A.R.I.S.")
 
-        # Carregar módulos
-        self._module_manager.load_modules()
+        # Carregar módulos (com DI via container)
+        self._module_manager.load_modules(container=self._container)
+
+        # Neural Core: sincronizar estado com o mundo real
+        self._neural.event_bus.publish(Event(
+            event_type=EVENT_BOOT,
+            source="aris",
+            payload={"version": self._settings.VERSION},
+            priority=80,
+            confidence=1.0,
+        ))
+        self._neural.state.update_hardware(
+            connected=self._hardware.connected,
+            available=self._hardware.available,
+        )
 
         # Configurar multi-provider com personalidade
         from config.personality import ARIS_PERSONALITY
@@ -260,11 +314,21 @@ class Aris:
             self._hardware.register_button_action("config_action", self._on_button_config)
             self._hardware.register_button_action("reconnect", self._on_button_reconnect)
 
-            # Estado inicial
+            # Estado inicial (sem logs falsos se hardware indisponível)
             self._hardware.set_state(SystemState.IDLE)
+            self._neural.state.update_hardware(
+                connected=self._hardware.connected,
+                available=self._hardware.available,
+            )
+        else:
+            self._neural.state.update_hardware(connected=False, available=False)
 
         # Iniciar scheduler em background
         self._scheduler.start_checker(callback=self._on_task_due)
+        self._neural.state.update_scheduler(
+            running=True,
+            pending_tasks=self._scheduler.get_pending_count(),
+        )
 
         # Exibir banner
         self._print_banner()
@@ -307,6 +371,19 @@ class Aris:
                 # Comandos diretos do terminal
                 if user_input.strip().lower() in ("help", "ajuda", "comandos"):
                     self._show_help()
+                    continue
+
+                # Neural Core: caminho determinístico (sem LLM)
+                try:
+                    neural_result = self._neural.process(user_input)
+                except Exception as e:
+                    self._logger.error(f"NeuralCore: falha no processamento ({e})")
+                    neural_result = None
+                if neural_result is not None:
+                    if neural_result.output:
+                        ArisUI.show_response(neural_result.output)
+                    elif neural_result.error:
+                        ArisUI.show_error(neural_result.error)
                     continue
 
                 # Enviar tudo para a IA interpretar
@@ -403,6 +480,15 @@ class Aris:
         print(f"\n  {Terminal.YELLOW}⏰ LEMBRETE:{Terminal.RESET} {Terminal.BOLD}{task.title}{Terminal.RESET}")
         if task.description:
             print(f"  {Terminal.DIM}{task.description}{Terminal.RESET}")
+
+        # Evento de timer no Neural Core
+        self._neural.event_bus.publish(Event(
+            event_type=EVENT_TIMER_FINISHED,
+            source="scheduler",
+            payload={"title": task.title},
+            priority=70,
+            confidence=1.0,
+        ))
 
         # Notificar ESP32
         if self._hardware.connected:
@@ -519,7 +605,6 @@ class Aris:
         mem_count = self._memory.get_stats().get("total_memories", 0)
         provider = self._multi_chat.provider_name if self._multi_chat.available else "local"
         scheduler_count = self._scheduler.get_pending_count()
-        context = self._context.format_context().split("\n")[0] if self._context else ""
 
         parts = [self._settings.VERSION, provider, f"{mem_count} mem"]
         if scheduler_count > 0:
@@ -530,6 +615,16 @@ class Aris:
     def shutdown(self) -> None:
         """Encerra o A.R.I.S. de forma limpa."""
         self._running = False
+
+        # Publicar evento de encerramento no Neural Core
+        if hasattr(self, "_neural"):
+            self._neural.event_bus.publish(Event(
+                event_type=EVENT_SHUTDOWN,
+                source="aris",
+                payload={},
+                priority=80,
+                confidence=1.0,
+            ))
 
         # Encerrar executor de threads
         if hasattr(self, '_executor'):

@@ -5,12 +5,11 @@ Groq, Google Gemini, Ollama (local).
 """
 
 import os
-import json
-from typing import Optional
+
 from openai import OpenAI
 
+from core.rate_limiter import gemini_limiter, groq_limiter, ollama_limiter
 from utils.logger import Logger
-from core.rate_limiter import groq_limiter, gemini_limiter, ollama_limiter
 
 
 class AIProvider:
@@ -30,7 +29,7 @@ class MultiProviderChat:
     Tenta o provedor primário; se falhar, tenta o próximo na lista.
     """
 
-    def __init__(self, logger: Optional[Logger] = None):
+    def __init__(self, logger: Logger | None = None):
         self._logger = logger
         self._providers: list[AIProvider] = []
         self._current_index = 0
@@ -87,7 +86,7 @@ class MultiProviderChat:
         return len(self._providers) > 0
 
     @property
-    def current_provider(self) -> Optional[AIProvider]:
+    def current_provider(self) -> AIProvider | None:
         """Retorna o provedor atualmente ativo."""
         if self._providers:
             return self._providers[self._current_index % len(self._providers)]

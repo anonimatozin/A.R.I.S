@@ -4,14 +4,11 @@ Sistema de agentes especializados com delegação.
 Inspirado em OpenClaw e vierisid/aris.
 """
 
-import json
-import threading
-import time
-from pathlib import Path
-from typing import Optional, Callable
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 
 class AgentStatus(Enum):
@@ -28,10 +25,10 @@ class AgentTask:
     description: str
     agent_type: str
     status: AgentStatus = AgentStatus.IDLE
-    result: Optional[str] = None
-    error: Optional[str] = None
+    result: str | None = None
+    error: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    completed_at: Optional[str] = None
+    completed_at: str | None = None
     timeout: int = 60  # segundos
 
 
@@ -44,7 +41,7 @@ class Agent:
     capabilities: list[str] = field(default_factory=list)
     status: AgentStatus = AgentStatus.IDLE
     tasks_completed: int = 0
-    current_task: Optional[str] = None
+    current_task: str | None = None
 
 
 class MultiAgentSystem:
@@ -79,7 +76,7 @@ class MultiAgentSystem:
         },
     ]
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._agents: dict[str, Agent] = {}
         self._tasks: dict[str, AgentTask] = {}
@@ -122,14 +119,14 @@ class MultiAgentSystem:
         self._agents[agent.id] = agent
         return agent
 
-    def get_agent(self, agent_type: str) -> Optional[Agent]:
+    def get_agent(self, agent_type: str) -> Agent | None:
         """Busca um agente por tipo."""
         for agent in self._agents.values():
             if agent.agent_type == agent_type and agent.status != AgentStatus.WORKING:
                 return agent
         return None
 
-    def get_best_agent(self, capability: str) -> Optional[Agent]:
+    def get_best_agent(self, capability: str) -> Agent | None:
         """Busca o melhor agente para uma capacidade."""
         candidates = [
             a for a in self._agents.values()
@@ -159,10 +156,10 @@ class MultiAgentSystem:
     def delegate_task(
         self,
         description: str,
-        agent_type: Optional[str] = None,
-        capability: Optional[str] = None,
+        agent_type: str | None = None,
+        capability: str | None = None,
         timeout: int = 60,
-    ) -> Optional[AgentTask]:
+    ) -> AgentTask | None:
         """Delega uma tarefa a um agente.
 
         Args:
@@ -242,11 +239,11 @@ class MultiAgentSystem:
 
         return True
 
-    def get_task(self, task_id: str) -> Optional[AgentTask]:
+    def get_task(self, task_id: str) -> AgentTask | None:
         """Retorna uma tarefa."""
         return self._tasks.get(task_id)
 
-    def list_tasks(self, status: Optional[AgentStatus] = None) -> list[dict]:
+    def list_tasks(self, status: AgentStatus | None = None) -> list[dict]:
         """Lista tarefas."""
         tasks = self._tasks.values()
         if status:
@@ -326,7 +323,7 @@ class MultiAgentSystem:
         """Formata status do sistema."""
         status = self.get_status()
         lines = [
-            f"🤖 Multi-Agent System",
+            "🤖 Multi-Agent System",
             f"   Agentes: {status['agents']}",
             f"   Tarefas: {status['tasks_total']} total",
             f"     Pendentes: {status['tasks_pending']}",

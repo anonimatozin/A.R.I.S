@@ -5,10 +5,9 @@ Inspirado em OpenClaw ClawHub.
 """
 
 import json
-from pathlib import Path
-from typing import Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 
 @dataclass
@@ -125,7 +124,7 @@ class SkillsSystem:
         },
     ]
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._skills: dict[str, Skill] = {}
         self._counter = 0
@@ -174,9 +173,9 @@ class SkillsSystem:
         description: str,
         category: str,
         instructions: str = "",
-        tools: Optional[list[str]] = None,
-        examples: Optional[list[str]] = None,
-        tags: Optional[list[str]] = None,
+        tools: list[str] | None = None,
+        examples: list[str] | None = None,
+        tags: list[str] | None = None,
         author: str = "A.R.I.S.",
         version: str = "1.0.0",
     ) -> Skill:
@@ -202,7 +201,7 @@ class SkillsSystem:
         self._save()
         return skill
 
-    def get_skill(self, name: str) -> Optional[Skill]:
+    def get_skill(self, name: str) -> Skill | None:
         """Busca skill pelo nome."""
         for skill in self._skills.values():
             if skill.name.lower() == name.lower():
@@ -242,7 +241,7 @@ class SkillsSystem:
             return f"Skill '{name}' desativada"
         return f"Skill '{name}' não encontrada"
 
-    def get_skill_prompt(self, query: str) -> Optional[str]:
+    def get_skill_prompt(self, query: str) -> str | None:
         """Retorna o prompt de uma skill baseado na query."""
         skills = self.search_skills(query)
         if not skills:

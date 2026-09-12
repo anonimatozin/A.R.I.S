@@ -4,8 +4,8 @@ Gerencia conversas com o modelo de linguagem via Groq API.
 Suporta RAG (injeção de memórias relevantes no contexto).
 """
 
-import os
 from typing import TYPE_CHECKING
+
 from openai import OpenAI
 
 from config.personality import ARIS_PERSONALITY

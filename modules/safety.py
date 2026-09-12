@@ -3,13 +3,12 @@
 Define níveis de permissão para ações perigosas.
 """
 
-import json
 import hashlib
-from pathlib import Path
-from typing import Optional
+import json
 from dataclasses import dataclass
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from pathlib import Path
 
 
 class SafetyLevel(Enum):
@@ -58,12 +57,12 @@ class SafetyManager:
         "format_disk", "delete_system",
     ]
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
-        self._password_hash: Optional[str] = None
+        self._password_hash: str | None = None
         self._audit_log: list[dict] = []
         self._audit_file = data_dir / "safety_audit.json" if data_dir else None
-        self._master_password: Optional[str] = None
+        self._master_password: str | None = None
 
         self._action_map: dict[str, SafetyAction] = {}
         self._init_action_map()
@@ -110,7 +109,7 @@ class SafetyManager:
             return safety_action.level
         return SafetyLevel.CAUTION  # Default: cautela
 
-    def can_execute(self, action: str, password: Optional[str] = None) -> tuple[bool, str]:
+    def can_execute(self, action: str, password: str | None = None) -> tuple[bool, str]:
         """Verifica se uma ação pode ser executada.
 
         Returns:

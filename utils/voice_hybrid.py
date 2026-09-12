@@ -10,11 +10,9 @@ Suporta STT (Speech-to-Text) via:
 """
 
 import asyncio
-import threading
-import tempfile
 import os
-from typing import Optional
-from pathlib import Path
+import tempfile
+import threading
 
 try:
     import pyttsx3
@@ -169,7 +167,7 @@ class HybridVoice:
         except Exception:
             pass
 
-    def listen(self, timeout: int = 5, language: str = "pt-BR") -> Optional[str]:
+    def listen(self, timeout: int = 5, language: str = "pt-BR") -> str | None:
         """Escuta áudio do microfone e converte em texto.
 
         Args:
@@ -201,12 +199,12 @@ class HybridVoice:
         except Exception:
             return None
 
-    def _listen_offline(self, audio) -> Optional[str]:
+    def _listen_offline(self, audio) -> str | None:
         """Reconhecimento offline via Vosk."""
         try:
-            from vosk import Model, KaldiRecognizer
-            import wave
             import json
+
+            from vosk import KaldiRecognizer, Model
 
             model = Model("vosk-model-pt")
             rec = KaldiRecognizer(model, 16000)

@@ -31,3 +31,8 @@ plyer>=2.1.0
 # Web/Search
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+
+# Dev / Testes
+pytest>=7.0
+ruff>=0.4.0
+mypy>=1.0

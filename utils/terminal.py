@@ -3,9 +3,7 @@
 Interface visual moderna inspirada em OpenCode/Claude Code.
 """
 
-import os
 import sys
-from typing import Optional
 from datetime import datetime
 
 
@@ -47,8 +45,9 @@ class Terminal:
 
     @staticmethod
     def clear() -> None:
-        """Limpa a tela do terminal."""
-        os.system("cls" if os.name == "nt" else "clear")
+        """Limpa a tela do terminal (ANSI, sem invocar shell)."""
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.flush()
 
     @staticmethod
     def colorize(text: str, color: str) -> str:

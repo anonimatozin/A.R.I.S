@@ -6,7 +6,6 @@ Previne estouro de quota em uso intenso.
 
 import time
 from collections import deque
-from typing import Optional
 
 
 class RateLimiter:
@@ -27,7 +26,7 @@ class RateLimiter:
         self.period = period_seconds
         self.name = name
         self._calls: deque = deque()
-        self._blocked_until: Optional[float] = None
+        self._blocked_until: float | None = None
 
     def allow(self) -> bool:
         """Verifica se uma chamada é permitida."""

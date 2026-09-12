@@ -33,15 +33,19 @@ Thumbs.db
 logs/*.log
 logs/*.log.*
 
-# Data
+# Data (estado de runtime gerado localmente)
 data/*.json
 data/*.db
 data/*.sqlite
+data/
 
 # Tests
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Firmware ESP32 — credenciais de rede nunca versionadas
+firmware/esp32_aris/credentials.h
 
 # Assets (binários)
 assets/*.png

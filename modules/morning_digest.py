@@ -5,15 +5,14 @@ Inspirado em open-aris/OpenAris.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from datetime import datetime, timedelta
 
 
 class MorningDigest:
     """Gerador de briefing diário."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._digest_file = data_dir / "morning_digest.json" if data_dir else None
         self._history: list[dict] = []
@@ -57,12 +56,12 @@ class MorningDigest:
 
     def generate(
         self,
-        weather_data: Optional[str] = None,
-        tasks_data: Optional[str] = None,
-        system_data: Optional[str] = None,
-        memory_data: Optional[str] = None,
-        calendar_data: Optional[str] = None,
-        news_data: Optional[str] = None,
+        weather_data: str | None = None,
+        tasks_data: str | None = None,
+        system_data: str | None = None,
+        memory_data: str | None = None,
+        calendar_data: str | None = None,
+        news_data: str | None = None,
     ) -> str:
         """Gera o briefing diário.
 

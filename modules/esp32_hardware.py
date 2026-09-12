@@ -8,19 +8,17 @@ Arquitetura:
   ESP32 → WebSocket → HardwareManager → ARIS Event System
 """
 
-import json
-import time
-import threading
 import asyncio
-from pathlib import Path
-from typing import Optional, Callable
-from dataclasses import dataclass, field
-from datetime import datetime
+import importlib.util
+import json
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 
 from config.esp32_config import ESP32Config
 from utils.logger import Logger
-
 
 # ── Estados do Sistema ──────────────────────────────────────
 
@@ -114,10 +112,11 @@ class HardwareManager:
     - Modo simulação para desenvolvimento
     """
 
-    def __init__(self, config: ESP32Config, logger: Optional[Logger] = None):
+    def __init__(self, config: ESP32Config, logger: Logger | None = None):
         self._config = config
         self._logger = logger
         self._connected = False
+        self._available = True
         self._esp32_ws = None
         self._current_state = SystemState.INITIALIZING
         self._lock = threading.Lock()
@@ -130,13 +129,13 @@ class HardwareManager:
         self._right_color = LEDColor()
 
         # Thread do WebSocket server
-        self._server_thread: Optional[threading.Thread] = None
+        self._server_thread: threading.Thread | None = None
         self._running = False
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         # Heartbeat
         self._last_heartbeat = 0.0
-        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_thread: threading.Thread | None = None
 
         # Estatísticas
         self._stats = {
@@ -155,23 +154,30 @@ class HardwareManager:
     def start(self) -> str:
         """Inicia o WebSocket server."""
         if not self._config.enabled:
-            return "ESP32 desabilitado (ESP32_ENABLED=false)"
+            self._available = False
+            return "ESP32 desabilitado (ESP32_ENABLED=false) - hardware indisponível"
 
         if self._config.simulation:
             self._connected = True
+            self._available = True
             self._current_state = SystemState.IDLE
-            self._log("Simulação iniciada — ESP32 fake conectado")
+            self._log("Simulação iniciada - ESP32 fake conectado")
             return "ESP32 em modo simulação"
 
         try:
-            import websockets
+            if importlib.util.find_spec("websockets") is None:
+                raise ImportError("websockets")
             self._running = True
+            self._available = True
             self._server_thread = threading.Thread(target=self._run_server, daemon=True)
             self._server_thread.start()
             self._log(f"WebSocket server iniciando em ws://{self._config.ws_host}:{self._config.ws_port}")
             return f"ESP32 server iniciando em porta {self._config.ws_port}"
         except ImportError:
-            return "websockets não instalado. Execute: pip install websockets"
+            self._available = False
+            self._connected = False
+            return ("Hardware ESP32 indisponível: biblioteca 'websockets' não instalada. "
+                    "Execute: pip install websockets")
 
     def stop(self) -> None:
         """Para o WebSocket server e desconecta."""
@@ -295,39 +301,47 @@ class HardwareManager:
     def set_left_led(self, color: LEDColor) -> None:
         """Define cor do LED esquerdo."""
         self._left_color = color
+        if not (self._connected or self._config.simulation):
+            return  # ESP32 indisponível/desconectado: sem log falso
         self._send_sync({
             "tipo": "led",
             "target": "left",
             "r": color.r, "g": color.g, "b": color.b,
             "brightness": color.brightness,
         })
-        self._log(f"LED LEFT → RGB({color.r},{color.g},{color.b})")
+        self._log(f"LED LEFT -> RGB({color.r},{color.g},{color.b})")
 
     def set_right_led(self, color: LEDColor) -> None:
         """Define cor do LED direito."""
         self._right_color = color
+        if not (self._connected or self._config.simulation):
+            return
         self._send_sync({
             "tipo": "led",
             "target": "right",
             "r": color.r, "g": color.g, "b": color.b,
             "brightness": color.brightness,
         })
-        self._log(f"LED RIGHT → RGB({color.r},{color.g},{color.b})")
+        self._log(f"LED RIGHT -> RGB({color.r},{color.g},{color.b})")
 
     def set_both_leds(self, color: LEDColor) -> None:
         """Define cor de ambos os LEDs."""
         self._left_color = color
         self._right_color = color
+        if not (self._connected or self._config.simulation):
+            return
         self._send_sync({
             "tipo": "led",
             "target": "both",
             "r": color.r, "g": color.g, "b": color.b,
             "brightness": color.brightness,
         })
-        self._log(f"LED BOTH → RGB({color.r},{color.g},{color.b})")
+        self._log(f"LED BOTH -> RGB({color.r},{color.g},{color.b})")
 
     def set_effect(self, target: str, effect: str) -> None:
         """Aplica efeito a um LED (blink, pulse, fade, flash)."""
+        if not (self._connected or self._config.simulation):
+            return
         self._send_sync({
             "tipo": "efeito",
             "target": target,
@@ -348,7 +362,6 @@ class HardwareManager:
         old_state = self._current_state
         self._current_state = state
 
-        # Atualizar LEDs conforme estado
         color = STATE_COLORS.get(state, LEDColor())
         effect = STATE_EFFECTS.get(state, "solid")
 
@@ -366,7 +379,7 @@ class HardwareManager:
         if effect != "solid":
             self.set_effect("both", effect)
 
-        self._log(f"Estado: {old_state.value} → {state.value}")
+        self._log(f"Estado: {old_state.value} -> {state.value}")
 
     def flash_success(self) -> None:
         """Flash verde de confirmação."""
@@ -439,12 +452,22 @@ class HardwareManager:
         return self._connected
 
     @property
+    def available(self) -> bool:
+        """Indica se o subsistema de hardware está disponível.
+
+        False quando o ESP32 está desabilitado ou a biblioteca
+        ``websockets`` não está instalada (sem simulação de logs).
+        """
+        return self._available
+
+    @property
     def state(self) -> SystemState:
         return self._current_state
 
     def get_status(self) -> dict:
         """Retorna status completo do hardware."""
         return {
+            "available": self._available,
             "connected": self._connected,
             "simulation": self._config.simulation,
             "state": self._current_state.value,

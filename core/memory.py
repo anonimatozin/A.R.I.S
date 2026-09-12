@@ -4,14 +4,12 @@ Sistema central de armazenamento, recuperação e busca de memórias.
 """
 
 import json
-import uuid
-import os
 import shutil
-from pathlib import Path
+import uuid
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
 
-from core.memory_models import MemoryEntry, MemoryCategory, Priority
+from core.memory_models import MemoryCategory, MemoryEntry, Priority
 from utils.logger import Logger
 
 
@@ -39,6 +37,10 @@ class MemoryManager:
 
         self._setup_directories()
         self._load_index()
+        # Persistência: garante que o índice exista desde o primeiro boot.
+        # Assim ele não é reconstruído do zero nas execuções seguintes.
+        if not self._index_path.exists():
+            self._save_index()
 
     def _setup_directories(self) -> None:
         """Cria a estrutura de pastas da memória."""
@@ -48,17 +50,21 @@ class MemoryManager:
             "Cache", "Logs", "Temporary", "Backups", "Archive", "Index",
         ]
 
+        created = False
         for category in categories:
             dir_path = self._memory_dir / category
-            dir_path.mkdir(parents=True, exist_ok=True)
+            if not dir_path.exists():
+                dir_path.mkdir(parents=True, exist_ok=True)
+                created = True
 
-        self._logger.info(f"Estrutura de memória criada em: {self._memory_dir}")
+        if created:
+            self._logger.info(f"Estrutura de memória criada em: {self._memory_dir}")
 
     def _load_index(self) -> None:
         """Carrega o índice de memórias do disco."""
         if self._index_path.exists():
             try:
-                with open(self._index_path, "r", encoding="utf-8") as f:
+                with open(self._index_path, encoding="utf-8") as f:
                     data = json.load(f)
                 for entry_data in data.get("memories", []):
                     entry = MemoryEntry.from_dict(entry_data)
@@ -142,7 +148,7 @@ class MemoryManager:
 
         entry.file_path = str(file_path)
 
-    def get(self, memory_id: str) -> Optional[MemoryEntry]:
+    def get(self, memory_id: str) -> MemoryEntry | None:
         """Recupera uma memória pelo ID.
 
         Args:
@@ -242,7 +248,7 @@ class MemoryManager:
         self._logger.info(f"Memória removida: [{memory_id}] {entry.title} (backup criado)")
         return True
 
-    def update(self, memory_id: str, **kwargs) -> Optional[MemoryEntry]:
+    def update(self, memory_id: str, **kwargs) -> MemoryEntry | None:
         """Atualiza uma memória existente.
 
         Args:
@@ -291,8 +297,8 @@ class MemoryManager:
         # Espaço livre
         free_space = 0
         try:
-            total, used, free = shutil.disk_usage(str(self._memory_dir))
-            free_space = free
+            _disk_total, _disk_used, _disk_free = shutil.disk_usage(str(self._memory_dir))
+            free_space = _disk_free
         except Exception:
             pass
 

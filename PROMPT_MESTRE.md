@@ -33,8 +33,23 @@ ARIS/
 │   ├── memory.py              # CRUD de memória
 │   ├── memory_models.py       # Modelos MemoryEntry, Priority
 │   ├── memory_organizer.py    # Auto-limpeza de memória
-│   ├── module_manager.py      # Loader dinâmico de módulos
-│   └── commands.py            # Registro de comandos
+│   ├── module_manager.py      # Loader dinâmico de módulos (DI)
+│   ├── commands.py            # Registro de comandos
+│   ├── services/              # Service Container + Event Bus
+│   └── neural/                # NEURAL CORE (arquitetura cognitiva)
+│       ├── core.py            # Orquestrador do pipeline
+│       ├── events.py / event_bus.py
+│       ├── state.py           # GlobalState (goal, falhas, eventos)
+│       ├── memory/            # WorkingMemory + Episódica + Procedural
+│       ├── attention/         # AttentionEngine (filtro de eventos)
+│       ├── context/           # ContextEngine (monta contexto)
+│       ├── reasoning/         # ReasoningRouter (determinístico/LLM)
+│       ├── decision/          # DecisionEngine (risco)
+│       ├── security/          # SecurityGate (allowlist de ações)
+│       ├── actions/           # ActionEngine (execução via registry)
+│       ├── feedback/          # FeedbackEngine (sucesso/falha)
+│       ├── planning/          # Planner (planos multi-etapas)
+│       └── learning/          # ExperienceStore (estatísticas)
 ├── modules/                   # Módulos de funcionalidade
 │   ├── chat.py                # Chat via Groq com RAG de memória
 │   ├── desktop_tools.py       # Mouse, teclado, mídia, janelas
@@ -170,6 +185,20 @@ numpy>=1.24.0
 
 #### `core/commands.py`
 - Registry centralizado de comandos registrados
+
+#### `core/neural/` — NEURAL CORE (arquitetura cognitiva híbrida)
+Pipeline de processamento por evento: atenção → working memory → contexto →
+reasoning router → decisão → security gate → plano → ação → feedback →
+memória episódica/procedural + learning. Regras:
+- **Sem LLM em toda decisão**: um motor determinístico cobre padrões
+  conhecidos (intents digitadas, monitoramento, clima); LLM é fallback (None
+  se indisponível).
+- **Sem reinforcement learning**: aprendizado é baseado em estatísticas
+  simples de sucesso/falha (ExperienceStore) + memória episódica.
+- **Segurança**: SecurityGate valida decisões contra allowlist de
+  capacidades do registry (módulo/action); ações de risco alto exigem
+  confirmação; nunca executa capacidades desconhecidas.
+- Interligado ao `core/services` (ServiceContainer) e `EventBus`.
 
 ### 5.2 MÓDULOS
 
@@ -367,7 +396,8 @@ numpy>=1.24.0
 19. **requirements.txt com dependências não usadas** — torch, transformers, newspaper3k
 20. **Import circular potencial** — memory_models importado em vários lugares
 21. **Logger não estruturado** — sem correlação de requests
-22. **Sem testes automatizados** — nenhum pytest configurado
+22. **~Cobertura de testes parcial** — pytest configurado (72 testes) mas módulos
+    de voz/awareness/browser ainda sem cobertura
 23. **Sem CI/CD** — nenhum pipeline
 
 ---
@@ -603,8 +633,8 @@ pip install -r requirements.txt
 # Instalar Playwright
 playwright install chromium
 
-# Rodar testes (quando existirem)
-pytest tests/
+# Rodar testes (pytest, incluindo ESP32 e Neural Core)
+python -m pytest tests/
 ```
 
 ---

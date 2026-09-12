@@ -3,17 +3,15 @@
 Modo de análise aprofundada de arquivos, código e imagens.
 """
 
-import os
-import json
 from pathlib import Path
-from typing import Optional
+
 from utils.logger import Logger
 
 
 class TurboMode:
     """Modo Turbo para análises profundas."""
 
-    def __init__(self, logger: Optional[Logger] = None):
+    def __init__(self, logger: Logger | None = None):
         self._logger = logger
         self._active = False
 
@@ -270,9 +268,9 @@ class TurboMode:
     def get_file_diff_summary(self, file1: str, file2: str) -> str:
         """Compara dois arquivos e resume diferenças."""
         try:
-            with open(file1, "r", encoding="utf-8", errors="ignore") as f:
+            with open(file1, encoding="utf-8", errors="ignore") as f:
                 lines1 = set(f.readlines())
-            with open(file2, "r", encoding="utf-8", errors="ignore") as f:
+            with open(file2, encoding="utf-8", errors="ignore") as f:
                 lines2 = set(f.readlines())
 
             added = lines2 - lines1

@@ -4,7 +4,7 @@ Registry central de comandos com suporte a decorators e safety.
 Cada módulo se auto-registra via @registry.register().
 """
 
-from typing import Callable, Any, Optional
+from collections.abc import Callable
 
 
 class CommandRegistry:
@@ -99,7 +99,7 @@ class CommandRegistry:
                         "params": params,
                         "ctx": ctx,
                     }
-                    return f"⚠️ Ação CRITICAL requer confirmação. Responda 'sim' para confirmar."
+                    return "⚠️ Ação CRITICAL requer confirmação. Responda 'sim' para confirmar."
 
                 if not self._safety_manager.check_password(password):
                     return "❌ Senha incorreta. Ação negada."

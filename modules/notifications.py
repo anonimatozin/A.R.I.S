@@ -3,18 +3,16 @@
 Sistema de notificações nativas do Windows.
 """
 
-import os
-import sys
 import json
-from pathlib import Path
-from typing import Optional
+import sys
 from datetime import datetime
+from pathlib import Path
 
 
 class NotificationManager:
     """Gerenciador de notificações do Windows."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._history_file = data_dir / "notifications.json" if data_dir else None
         self._history: list[dict] = []
@@ -53,7 +51,7 @@ class NotificationManager:
         title: str,
         message: str,
         duration: int = 5,
-        icon: Optional[str] = None,
+        icon: str | None = None,
     ) -> str:
         """Envia uma notificação nativa do Windows.
 

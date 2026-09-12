@@ -4,7 +4,7 @@ Este módulo contém os componentes centrais do sistema.
 """
 
 from core.aris import Aris
-from core.module_manager import ModuleManager
 from core.commands import CommandRegistry
+from core.module_manager import ModuleManager
 
 __all__ = ["Aris", "ModuleManager", "CommandRegistry"]

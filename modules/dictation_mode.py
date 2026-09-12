@@ -4,9 +4,8 @@ Segure uma tecla, fale, e o texto aparece em qualquer lugar.
 Inspirado em isair/aris e akshayaggarwal99/aris-ai-assistant.
 """
 
-import threading
 import time
-from typing import Optional
+from collections.abc import Callable
 
 try:
     import pyautogui
@@ -33,7 +32,7 @@ class DictationMode:
         self._filler_words = ["é", "eh", "hum", "uh", "hmm", "tipo", "assim", "né"]
         self._custom_dictionary: dict[str, str] = {}
         self._history: list[dict] = []
-        self._on_text: Optional[callable] = None
+        self._on_text: Callable[[str], None] | None = None
 
         if _SR:
             self._recognizer = sr.Recognizer()
@@ -83,7 +82,7 @@ class DictationMode:
 
         return " ".join(cleaned)
 
-    def start_dictation(self, callback: Optional[callable] = None) -> str:
+    def start_dictation(self, callback: Callable[[str], None] | None = None) -> str:
         """Inicia o modo dictação."""
         if not self.available:
             return "Dictação não disponível (instale SpeechRecognition e pyautogui)"
@@ -98,7 +97,7 @@ class DictationMode:
         self._listening = False
         return "Modo dictação desativado"
 
-    def listen_once(self, timeout: int = 5) -> Optional[str]:
+    def listen_once(self, timeout: int = 5) -> str | None:
         """Escuta uma vez e retorna o texto."""
         if not self._recognizer:
             return None
@@ -130,11 +129,12 @@ class DictationMode:
         except Exception:
             return None
 
-    def _listen_offline(self, audio) -> Optional[str]:
+    def _listen_offline(self, audio) -> str | None:
         """Reconhecimento offline via Vosk."""
         try:
-            from vosk import Model, KaldiRecognizer
             import json
+
+            from vosk import KaldiRecognizer, Model
 
             model = Model("vosk-model-pt")
             rec = KaldiRecognizer(model, 16000)

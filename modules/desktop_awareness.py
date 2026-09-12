@@ -4,13 +4,10 @@ Monitora a tela em tempo real e extrai informações via OCR.
 Inspirado em vierisid/aris e isair/aris.
 """
 
-import os
-import time
-import json
 import threading
-from pathlib import Path
-from typing import Optional
+import time
 from datetime import datetime
+from pathlib import Path
 
 try:
     import pyautogui
@@ -34,11 +31,11 @@ except ImportError:
 class DesktopAwareness:
     """Monitor de tela em tempo real."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._screenshot_dir = data_dir / "screenshots" if data_dir else None
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._interval = 30  # segundos
         self._last_text = ""
         self._history: list[dict] = []
@@ -55,7 +52,7 @@ class DesktopAwareness:
     def ocr_available(self) -> bool:
         return _TESSERACT and _PIL
 
-    def capture_screenshot(self, filename: Optional[str] = None) -> Optional[str]:
+    def capture_screenshot(self, filename: str | None = None) -> str | None:
         """Captura uma screenshot.
 
         Returns:
@@ -253,7 +250,7 @@ class DesktopAwareness:
     def format_status(self) -> str:
         """Formata status do monitoramento."""
         lines = [
-            f"🖥️ Desktop Awareness",
+            "🖥️ Desktop Awareness",
             f"   Monitoramento: {'Ativo' if self._running else 'Inativo'}",
             f"   OCR: {'Disponível' if self.ocr_available else 'Não disponível'}",
             f"   Intervalo: {self._interval}s",

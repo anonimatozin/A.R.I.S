@@ -4,7 +4,6 @@ Intent handlers para controle do ESP32 via comandos de terminal.
 Registra o módulo 'hardware' no registry.
 """
 
-from core.commands import registry
 from modules.esp32_hardware import LEDColor, SystemState
 
 

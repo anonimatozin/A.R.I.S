@@ -4,7 +4,6 @@ Utiliza o Windows SAPI (Speech API) para síntese de voz.
 """
 
 import threading
-from typing import Optional
 
 try:
     import win32com.client
@@ -26,7 +25,7 @@ class Voice:
         self,
         rate: int = 0,
         volume: int = 100,
-        voice_id: Optional[int] = None,
+        voice_id: int | None = None,
     ) -> None:
         self._rate = max(-10, min(10, rate))
         self._volume = max(0, min(100, volume))

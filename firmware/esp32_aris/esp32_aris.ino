@@ -19,9 +19,9 @@
 #include <ArduinoJson.h>
 
 // ── Configuração de rede ───────────────────────────────────
-const char* WIFI_SSID = "RAFAEL";
-const char* WIFI_PASS = "vinicius2109";
-const char* WS_HOST = "192.168.0.109";  // IP do PC
+// Credenciais não são versionadas: copie `credentials.h.example`
+// para `credentials.h` e preencha com seus dados (ver .gitignore).
+#include "credentials.h"
 const int WS_PORT = 8766;
 
 // ── Pinos GPIO ─────────────────────────────────────────────

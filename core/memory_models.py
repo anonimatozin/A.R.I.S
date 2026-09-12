@@ -3,11 +3,10 @@
 Define as estruturas de dados para armazenamento de memórias.
 """
 
-from dataclasses import dataclass, field, asdict
+import json
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
-import json
 
 
 class MemoryCategory(Enum):
@@ -88,7 +87,7 @@ class MemoryEntry:
     priority: Priority = Priority.MEDIUM
     tags: list[str] = field(default_factory=list)
     source: str = "conversation"
-    file_path: Optional[str] = None
+    file_path: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_accessed: str = field(default_factory=lambda: datetime.now().isoformat())
     access_count: int = 0

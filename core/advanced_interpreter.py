@@ -6,10 +6,10 @@ Suporta contexto, referências, condicionais e sequências.
 
 import json
 import re
-from dataclasses import dataclass, field
-from typing import Any, Optional
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -20,8 +20,8 @@ class Intent:
     params: dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
     order: int = 0
-    conditional: Optional[dict] = None
-    context: Optional[str] = None
+    conditional: dict | None = None
+    context: str | None = None
 
 
 @dataclass

@@ -3,22 +3,15 @@
 Ferramentas para automação: mouse, teclado, janelas, mídia, clipboard.
 """
 
-import subprocess
 import os
-import time
-from typing import Optional
+import shutil
+import subprocess
 
 try:
     import pyautogui
     _PYAUTOGUI_AVAILABLE = True
 except ImportError:
     _PYAUTOGUI_AVAILABLE = False
-
-try:
-    import psutil
-    _PSUTIL_AVAILABLE = True
-except ImportError:
-    _PSUTIL_AVAILABLE = False
 
 
 class DesktopTools:
@@ -43,7 +36,7 @@ class DesktopTools:
         pyautogui.moveTo(x, y)
         return f"Mouse movido para ({x}, {y})"
 
-    def mouse_click(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left") -> str:
+    def mouse_click(self, x: int | None = None, y: int | None = None, button: str = "left") -> str:
         """Clica em uma posição."""
         if not self._available:
             return "pyautogui não instalado"
@@ -53,7 +46,7 @@ class DesktopTools:
             pyautogui.click(button=button)
         return f"Click {button} executado"
 
-    def mouse_double_click(self, x: Optional[int] = None, y: Optional[int] = None) -> str:
+    def mouse_double_click(self, x: int | None = None, y: int | None = None) -> str:
         """Duplo clique."""
         if not self._available:
             return "pyautogui não instalado"
@@ -122,7 +115,9 @@ class DesktopTools:
                  f"(Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue).MainWindowHandle | ForEach-Object {{ Add-Type -Name Win -Namespace Native -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);' ; [Native.Win]::SetForegroundWindow($_) }}"],
                 capture_output=True, text=True, timeout=10
             )
-            return f"Janela '{process_name}' focada"
+            found = bool(result.stdout and result.stdout.strip())
+            return (f"Janela '{process_name}' focada" if found
+                    else f"Janela '{process_name}' não encontrada")
         except Exception as e:
             return f"Erro ao focar janela: {e}"
 
@@ -205,13 +200,46 @@ class DesktopTools:
 
     # ── Sistema ────────────────────────────────────────────
 
+    # Aliases conhecidos (nome amigável → alvo do Windows)
+    APP_ALIASES = {
+        "chrome": "chrome", "firefox": "firefox", "discord": "discord",
+        "spotify": "spotify", "notepad": "notepad", "calculator": "calc",
+        "bloco de notas": "notepad", "navegador": "chrome",
+        "explorer": "explorer", "windows explorer": "explorer",
+        "explorador": "explorer", "painel de controle": "control",
+    }
+
     def open_app(self, app_name: str) -> str:
-        """Abre um aplicativo."""
+        """Abre um aplicativo de forma segura (sem shell).
+
+        Usa ``os.startfile`` (ShellExecute, sem shell de comandos) com
+        fallback para ``subprocess.Popen`` apontando para um executável
+        resolvido via PATH. Nenhum texto do usuário chega a um shell,
+        eliminando o vetor de injeção.
+        """
+        name = app_name.strip().strip('"')
+        if not name:
+            return "Nome de aplicativo vazio."
+
+        name = self.APP_ALIASES.get(name.lower(), name)
+
+        # 1. os.startfile: associação do Windows, sem shell
         try:
-            subprocess.Popen(["start", app_name], shell=True)
-            return f"Abrindo {app_name}..."
-        except Exception as e:
-            return f"Erro ao abrir {app_name}: {e}"
+            os.startfile(name)
+            return f"Abrindo {name}..."
+        except OSError:
+            pass
+
+        # 2. Resolver executável no PATH (sem shell)
+        exe = shutil.which(name)
+        if exe:
+            try:
+                subprocess.Popen([exe])
+                return f"Abrindo {exe}..."
+            except Exception as e:
+                return f"Erro ao abrir {name}: {e}"
+
+        return f"Não foi possível abrir '{name}' (aplicativo não encontrado)."
 
     def close_app(self, process_name: str) -> str:
         """Fecha um aplicativo pelo nome do processo."""

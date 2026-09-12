@@ -4,14 +4,12 @@ Responsável pela limpeza automática, organização e manutenção
 do sistema de memória.
 """
 
-import os
 import shutil
-from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional
+from pathlib import Path
 
 from core.memory import MemoryManager
-from core.memory_models import MemoryEntry, MemoryCategory
+from core.memory_models import MemoryCategory
 from utils.logger import Logger
 
 

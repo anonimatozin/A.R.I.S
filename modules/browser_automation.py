@@ -4,11 +4,9 @@ Usa Playwright para automação web.
 Inspirado em OpenClaw e isair/aris.
 """
 
-import json
 import asyncio
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
+from pathlib import Path
 
 try:
     from playwright.async_api import async_playwright
@@ -20,7 +18,7 @@ except ImportError:
 class BrowserAutomation:
     """Automação de navegador via Playwright."""
 
-    def __init__(self, data_dir: Optional[Path] = None):
+    def __init__(self, data_dir: Path | None = None):
         self._data_dir = data_dir
         self._browser = None
         self._context = None
@@ -70,7 +68,7 @@ class BrowserAutomation:
         except Exception as e:
             return f"Erro ao navegar: {e}"
 
-    async def get_content(self, selector: Optional[str] = None) -> str:
+    async def get_content(self, selector: str | None = None) -> str:
         """Retorna o conteúdo da página."""
         if not self._page:
             return "Navegador não iniciado"
@@ -84,7 +82,7 @@ class BrowserAutomation:
         except Exception as e:
             return f"Erro ao obter conteúdo: {e}"
 
-    async def get_html(self, selector: Optional[str] = None) -> str:
+    async def get_html(self, selector: str | None = None) -> str:
         """Retorna o HTML da página."""
         if not self._page:
             return "Navegador não iniciado"
@@ -118,7 +116,7 @@ class BrowserAutomation:
         except Exception as e:
             return f"Erro ao digitar: {e}"
 
-    async def screenshot(self, filename: Optional[str] = None) -> str:
+    async def screenshot(self, filename: str | None = None) -> str:
         """Captura screenshot da página."""
         if not self._page:
             return "Navegador não iniciado"
@@ -210,7 +208,7 @@ class BrowserAutomation:
     def navigate_sync(self, url: str) -> str:
         return self.run_async(self.navigate(url))
 
-    def get_content_sync(self, selector: Optional[str] = None) -> str:
+    def get_content_sync(self, selector: str | None = None) -> str:
         return self.run_async(self.get_content(selector))
 
     def click_sync(self, selector: str) -> str:
@@ -219,7 +217,7 @@ class BrowserAutomation:
     def search_sync(self, query: str) -> str:
         return self.run_async(self.search_google(query))
 
-    def screenshot_sync(self, filename: Optional[str] = None) -> str:
+    def screenshot_sync(self, filename: str | None = None) -> str:
         return self.run_async(self.screenshot(filename))
 
     def format_status(self) -> str:

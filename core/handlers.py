@@ -12,9 +12,8 @@ Para adicionar um novo handler:
         return modulo.faz_algo(params.get("arg"))
 """
 
-from utils.terminal import Terminal, ArisUI
 from core.commands import registry
-
+from utils.terminal import Terminal
 
 # ── Weather ─────────────────────────────────────────────────
 
@@ -287,7 +286,7 @@ def handle_awareness(action: str, params: dict, **ctx) -> str:
         if result["found"]:
             print(f"  ✅ Encontrado: {result['context']}")
         else:
-            print(f"  ❌ Não encontrado na tela")
+            print("  ❌ Não encontrado na tela")
 
     elif action == "monitor":
         aw.monitor_screen(interval=params.get("interval", 30))
@@ -558,7 +557,8 @@ def handle_config(action: str, params: dict, **ctx) -> str:
     if settings:
         print(f"  Diretório base: {settings.BASE_DIR}")
         print(f"  Modelo de chat: {settings.CHAT_MODEL}")
-        print(f"  Safety level: {settings.SAFETY_LEVEL}")
+        safety_level = getattr(settings, "SAFETY_LEVEL", None)
+        print(f"  Safety level: {safety_level if safety_level is not None else 'CAUTION (2) - padrão do registry'}")
         print(f"  Voz: rate={settings.VOICE_RATE}, volume={settings.VOICE_VOLUME}")
     else:
         print("  Configurações indisponíveis.")

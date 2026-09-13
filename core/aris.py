@@ -7,7 +7,9 @@ comandos e a interface do terminal.
 import concurrent.futures
 import os
 import signal
+import subprocess
 import sys
+from pathlib import Path
 
 import core.handlers  # noqa: F401 — auto-registra todos os handlers
 from config.esp32_config import ESP32Config
@@ -15,6 +17,7 @@ from config.settings import Settings
 from core.advanced_interpreter import AdvancedInterpreter
 from core.commands import registry
 from core.intent import Intent, IntentAnalyzer
+from core.memcore import MemoryKind
 from core.memory import MemoryManager
 from core.memory_models import MemoryCategory
 from core.memory_organizer import MemoryOrganizer
@@ -27,6 +30,7 @@ from core.neural.events import (
     EVENT_TIMER_FINISHED,
     Event,
 )
+from core.perception import PerceptionConfig, PerceptionManager
 from core.services import ServiceContainer
 from modules.auto_redaction import AutoRedaction
 from modules.browser_automation import BrowserAutomation
@@ -141,6 +145,14 @@ class Aris:
         self._esp32_config = ESP32Config()
         self._hardware = HardwareManager(config=self._esp32_config, logger=self._logger)
 
+        # Estado de interação
+        self._mic_mode = False
+        self._cmd_count = 0
+        self._proactive_next = 2
+        self._proactive_enabled = True
+        self._briefing_offered = False
+        self._last_aris_question = None
+
         if self._settings.SAFETY_PASSWORD:
             self._safety.set_master_password(self._settings.SAFETY_PASSWORD)
 
@@ -156,7 +168,60 @@ class Aris:
         )
         self._neural.register_services(self._container)
         self._neural.set_handler_context(self._build_handler_context)
+
+        # Camada de percepção: sensores + atenção integrados ao Neural Core.
+        self._perception = None
+        try:
+            self._perception = PerceptionManager.with_defaults(
+                event_bus=self._neural.event_bus,
+                state=self._neural.state,
+                attention=self._neural.attention,
+                memory=self._neural.memory,
+                config=PerceptionConfig.load(),
+                awareness=self._awareness,
+                hardware=self._hardware,
+                analyzer=self._analyzer,
+                logger=self._logger,
+            )
+            self._container.set("modules.perception", self._perception)
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Percepção indisponível: {e}")
+
         self._register_module_services()
+
+        # Memória cognitiva (SQLite em D:/ARIS_MEMORY, com fallback).
+        self._memory_service = None
+        try:
+            from core.memcore import MemoryService
+            self._memory_service = MemoryService(
+                primary_root=Path("D:/ARIS_MEMORY"),
+                legacy_dir=self._settings.MEMORY_ROOT,
+                logger=self._logger,
+            )
+            self._container.set("memory.service", self._memory_service)
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Memória cognitiva indisponível: {e}")
+
+        # Vision Engine (visão computacional: tela → OCR → VLM → eventos/memória).
+        self._vision = None
+        try:
+            from core.vision import VisionConfig, VisionEngine
+
+            self._vision = VisionEngine(
+                event_bus=self._neural.event_bus,
+                awareness=self._awareness,
+                logger=self._logger,
+                config=VisionConfig.load(),
+                memory=self._memory_service,
+            )
+            self._container.set("modules.vision", self._vision)
+            if self._logger:
+                self._logger.info("Vision Engine inicializado.")
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Vision Engine indisponível: {e}")
 
         self._running = False
         self._setup_signal_handlers()
@@ -181,6 +246,7 @@ class Aris:
             ("modules.context", self._context),
             ("modules.entertainment", self._entertainment),
             ("modules.turbo", self._turbo),
+            ("modules.perception", self._perception),
             ("memory", self._memory),
             ("settings", self._settings),
         ):
@@ -219,11 +285,14 @@ class Aris:
             "skills": self._skills,
             "dictation": self._dictation,
             "memory": self._memory,
+            "memory_service": self._memory_service,
             "voice": self._voice,
             "settings": self._settings,
             "hardware": self._hardware,
             "event_bus": self._neural.event_bus,
             "state": self._neural.state,
+            "perception": self._perception,
+            "vision": self._vision,
         }
 
         # Dados pré-computados para handlers que precisam
@@ -242,12 +311,12 @@ class Aris:
 
         return ctx
 
-    def _execute_intent(self, intent: Intent) -> None:
+    def _execute_intent(self, intent: Intent) -> str | None:
         """Executa uma intenção detectada pela IA.
 
         Delega para o CommandRegistry através do Neural Core (Security
         Gate + Ação + Feedback). Se o handler não existe, cai no
-        fallback legacy.
+        fallback legacy. Retorna o resumo falável do resultado.
         """
         module = intent.module
         params = intent.params
@@ -257,7 +326,7 @@ class Aris:
         # Comando de saída (sempre funciona)
         if module == "exit":
             self.shutdown()
-            return
+            return None
 
         # Tentar registry primeiro
         if registry.has_intent(module):
@@ -266,10 +335,53 @@ class Aris:
             result = self._neural.execute(decision, ctx=ctx)
             if not result.success and result.error.startswith("Segurança:"):
                 ArisUI.show_error(result.error)
-            return
+                return None
+            return result.output if result.success else None
 
         # Fallback: módulos sem handler registrado ainda
         self._execute_intent_legacy(intent)
+        return None
+
+    def _maybe_proactive(self, voice) -> None:
+        """Sugestão proativa leve estilo JARVIS (máx. 1 a cada ~4 comandos).
+
+        Usa o que já aprendeu (memórias) e o estado do sistema para
+        oferecer ajuda real — nunca executa nada sem permissão.
+        """
+        if not self._proactive_enabled or not voice.enabled:
+            return
+        self._cmd_count += 1
+        if self._cmd_count < self._proactive_next:
+            return
+        self._proactive_next = self._cmd_count + 4
+        try:
+            total = self._memory.get_stats().get("total_memories", 0)
+            if total == 0:
+                suggestion = ("Ainda não tenho memórias suas. Se quiser, eu anoto suas "
+                              "preferências conforme você for conversando comigo.")
+            else:
+                cpu = getattr(self._analyzer, "get_cpu_usage", lambda: None)()
+                ram = getattr(self._analyzer, "get_memory_usage", lambda: None)()
+                if cpu and cpu > 85:
+                    suggestion = (f"Detectei uso alto de CPU em {cpu:.0f} por cento. "
+                                  "Quer que eu prepare um relatório do sistema?")
+                elif ram and ram > 90:
+                    suggestion = (f"A memória está em {ram:.0f} por cento. "
+                                  "Posso sugerir processos para liberar espaço?")
+                elif total >= 3:
+                    if self._briefing_offered:
+                        # Não repetir o convite de briefing na mesma sessão.
+                        return
+                    self._briefing_offered = True
+                    suggestion = (f"Já aprendi {total} informações sobre você. Quer que eu "
+                                  "prepare um briefing com o que sei até agora?")
+                else:
+                    suggestion = ("Estou de prontidão. Se quiser, posso agendar lembretes "
+                                  "ou montar um briefing do dia.")
+            print(f"  💡 {suggestion}")
+            voice.speak(suggestion)
+        except Exception:
+            pass
 
     def _execute_intent_legacy(self, intent: Intent) -> None:
         """Fallback legado para módulos que ainda não foram migrados."""
@@ -330,6 +442,20 @@ class Aris:
             pending_tasks=self._scheduler.get_pending_count(),
         )
 
+        # Memória cognitiva: integridade, migração e manutenção
+        if self._memory_service:
+            try:
+                self._memory_service.boot()
+            except Exception as e:
+                self._logger.warning(f"Boot da memória cognitiva falhou: {e}")
+
+        # Iniciar percepção (sensores em background; sem falhas se indisponíveis)
+        if self._perception is not None:
+            try:
+                self._perception.start()
+            except Exception as e:
+                self._logger.warning(f"Percepção: falha ao iniciar ({e})")
+
         # Exibir banner
         self._print_banner()
 
@@ -352,19 +478,60 @@ class Aris:
 
         while self._running:
             try:
-                # Input moderno com status
-                user_input = ArisUI.input_modern(
-                    version=self._settings.VERSION,
-                    provider=self._multi_chat.provider_name if self._multi_chat.available else "local",
-                    mem_count=self._memory.get_stats().get("total_memories", 0),
-                    task_count=self._scheduler.get_pending_count(),
-                )
+                # Input: teclado ou microfone (modo voz)
+                voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
+                if self._mic_mode:
+                    if self._hybrid_voice._recognizer is None:
+                        self._mic_mode = False
+                    else:
+                        print("  🎙️ Escutando...", end="\r")
+                        user_input = self._hybrid_voice.listen(timeout=6) or ""
+                        print(" " * 60, end="\r")
+                        if user_input:
+                            print(f"  🎙️ Você disse: {user_input}")
+                else:
+                    # Input moderno com status
+                    user_input = ArisUI.input_modern(
+                        version=self._settings.VERSION,
+                        provider=self._multi_chat.provider_name if self._multi_chat.available else "local",
+                        mem_count=self._memory.get_stats().get("total_memories", 0),
+                        task_count=self._scheduler.get_pending_count(),
+                    )
 
                 if not user_input.strip():
                     continue
 
+                # Alimenta o observador de memória (buffer de conversa)
+                if self._memory_service:
+                    try:
+                        self._memory_service.observe("USER_MESSAGE", {"text": user_input})
+                    except Exception as e:
+                        self._logger.warning(f"Observador de memória falhou: {e}")
+
+                ui = user_input.strip().lower()
+                # Modo voz (microfone)
+                if ui in ("modo voz", "voz on", "mic on", "ativar mic", "usar microfone"):
+                    self._mic_mode = True if self._hybrid_voice._recognizer is not None else False
+                    self._sync_hardware_state(SystemState.IDLE)
+                    if self._mic_mode:
+                        print("  🎙️ Modo voz ativado. Fale seus comandos. Digite 'modo texto' para voltar a digitar.")
+                    else:
+                        print("  ⚠️ Sem microfone disponível. Instale: pip install SpeechRecognition pyaudio")
+                    continue
+                if ui in ("modo texto", "voz off", "mic off", "desativar mic"):
+                    self._mic_mode = False
+                    print("  ⌨️ Modo digitação ativado.")
+                    continue
+
                 # Safety: exit sempre funciona
                 if user_input.strip().lower() in ("exit", "sair", "encerrar", "desligar"):
+                    self.shutdown()
+                    break
+
+                # Reinício: abre um novo cmd com a ARIS e encerra esta
+                if ui in ("/reiniciar", "/restart", "reiniciar", "restart"):
+                    print("  🔄 Reiniciando A.R.I.S. ...")
+                    self._restart()
                     self.shutdown()
                     break
 
@@ -380,11 +547,33 @@ class Aris:
                     self._logger.error(f"NeuralCore: falha no processamento ({e})")
                     neural_result = None
                 if neural_result is not None:
+                    # Registrar no contexto da conversa (mesmo sem LLM)
+                    # para que "e depois?", "e então?" retomem o assunto.
+                    reply_text = neural_result.output or neural_result.error or ""
+                    self._interpreter.update_context(user_input, reply_text, [])
                     if neural_result.output:
                         ArisUI.show_response(neural_result.output)
+                        if voice.enabled:
+                            self._sync_hardware_state(SystemState.SPEAKING)
+                            voice.speak(neural_result.output)
+                            self._sync_hardware_state(SystemState.IDLE)
+                        self._track_aris_question(neural_result.output)
                     elif neural_result.error:
                         ArisUI.show_error(neural_result.error)
+                    self._maybe_proactive(voice)
                     continue
+
+                # Resposta curta na sequência de uma pergunta da própria
+                # ARIS: aprende a resposta em vez de perder o contexto
+                # (ex.: ARIS pergunta a fruta favorita e usuário diz "abacaxi").
+                if self._looks_like_answer(user_input):
+                    try:
+                        learned = self._learn_answer(user_input, voice)
+                        if learned:
+                            continue
+                    except Exception as e:
+                        if self._logger:
+                            self._logger.warning(f"Falha ao aprender resposta: {e}")
 
                 # Enviar tudo para a IA interpretar
                 chat = self._multi_chat if self._multi_chat.available else self._chat
@@ -415,22 +604,34 @@ class Aris:
                         ArisUI.show_actions_count(len(intents))
 
                     # Executar todas as intencoes na ordem
+                    spoken_parts = []
                     for intent in intents:
-                        self._execute_intent(intent)
+                        part = self._execute_intent(intent)
+                        if part:
+                            spoken_parts.append(str(part))
 
-                    # Atualizar contexto da conversa
-                    self._interpreter.update_context(user_input, clean_response, intents)
+                    # Resposta completa (texto natural + resultados das ações)
+                    speak_text = clean_response or ""
+                    if spoken_parts:
+                        speak_text = (speak_text + " " if speak_text else "") + " ".join(spoken_parts)
+
+                    # Atualizar contexto da conversa para retomar o assunto
+                    # depois (ex.: "e então?", "e depois?").
+                    self._interpreter.update_context(
+                        user_input, speak_text, intents)
 
                     # Mostrar resposta formatada
                     if clean_response:
                         ArisUI.show_response(clean_response)
 
-                    if voice.enabled and clean_response:
+                    if voice.enabled and speak_text:
                         self._sync_hardware_state(SystemState.SPEAKING)
-                        voice.speak(clean_response)
+                        voice.speak(speak_text)
+                    self._track_aris_question(speak_text)
 
                     # Estado: idle
                     self._sync_hardware_state(SystemState.IDLE)
+                    self._maybe_proactive(voice)
 
                     # Auto-salvar
                     if self._memory.should_save(user_input):
@@ -554,6 +755,7 @@ class Aris:
         ArisUI.show_help_section("Gerais", [
             ("help / ajuda", "Mostra esta ajuda"),
             ("exit / sair", "Encerra o sistema"),
+            ("/reiniciar", "Reinicia o sistema em um novo cmd"),
             ("config", "Abre configuracoes"),
         ])
 
@@ -612,6 +814,84 @@ class Aris:
 
         return f"[{' | '.join(parts)}] > "
 
+    def _track_aris_question(self, text: str) -> None:
+        """Lembra a última pergunta feita pela ARIS (para respostas do usuário)."""
+        self._last_aris_question = text if text and text.strip().endswith("?") else None
+
+    def _looks_like_answer(self, text: str) -> bool:
+        lower = text.strip().lower()
+        if not self._last_aris_question:
+            return False
+        if text.strip().endswith("?"):
+            return False
+        if lower in ("nao", "não", "sim", "ok", "ta", "tá", "tbm", "tambem",
+                     "s", "obrigado", "obrigada", "valeu", "legal", "blz"):
+            return False
+        words = text.split()
+        return 1 <= len(words) <= 4
+
+    def _learn_answer(self, text: str, voice) -> bool:
+        """Guarda a resposta curta do usuário à pergunta recém-feita."""
+        question = self._last_aris_question or ""
+        answer = text.strip()
+
+        try:
+            self._memory.save(
+                title=answer[:60],
+                content=answer,
+                category=MemoryCategory.CONVERSATIONS,
+                importance=6,
+                tags=["resposta", "auto"],
+                source="conversation",
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Não foi possível salvar na memória legada: {e}")
+
+        if self._memory_service:
+            try:
+                self._memory_service.remember(
+                    answer, kind=MemoryKind.SEMANTIC, importance=6.0,
+                    tags=["resposta", "auto"],
+                    summary=f"Em resposta a: {question}"[:140],
+                )
+            except Exception as e:
+                if self._logger:
+                    self._logger.warning(f"Não foi possível salvar no sistema novo: {e}")
+
+        msg = f"Anotado na memória! Sua resposta: {answer}."
+        ArisUI.show_response(msg)
+        if voice.enabled:
+            self._sync_hardware_state(SystemState.SPEAKING)
+            voice.speak(msg)
+            self._sync_hardware_state(SystemState.IDLE)
+        self._last_aris_question = None
+        return True
+
+    def _restart(self, delay: float = 1.8) -> None:
+        """Reinicia a A.R.I.S.: abre um novo cmd com ela rodando e encerra esta.
+
+        Um helper (janela invisível) espera ``delay`` segundos para a
+        instância atual liberar o lock de instância e só então abre a
+        nova janela do console. A instância atual fecha normalmente.
+        """
+        root = str(Path(__file__).resolve().parent.parent)
+        code = (
+            "import time, os, subprocess;"
+            f"time.sleep({delay});"
+            f"os.chdir({root!r});"
+            "subprocess.Popen(['cmd', '/k', 'run_aris.bat'],"
+            " creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=os.getcwd())"
+        )
+        try:
+            subprocess.Popen(
+                [sys.executable, "-c", code],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"Falha ao reiniciar a A.R.I.S.: {e}")
+
     def shutdown(self) -> None:
         """Encerra o A.R.I.S. de forma limpa."""
         self._running = False
@@ -630,9 +910,23 @@ class Aris:
         if hasattr(self, '_executor'):
             self._executor.shutdown(wait=False)
 
+        # Parar percepção (sensores em threads daemon)
+        if getattr(self, "_perception", None):
+            try:
+                self._perception.stop()
+            except Exception:
+                pass
+
         # Desligar ESP32
         if self._hardware.connected:
             self._hardware.set_state(SystemState.OFFLINE)
             self._hardware.stop()
+
+        # Fechar memória cognitiva
+        if getattr(self, "_memory_service", None):
+            try:
+                self._memory_service.close()
+            except Exception:
+                pass
 
         self._logger.info("A.R.I.S. encerrado.")

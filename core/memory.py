@@ -343,6 +343,8 @@ class MemoryManager:
             "dispositivo", "automação", "rota", "diretório",
             "importante", "lembrar", "anotar", "salvar",
             "meu", "minha", "nosso", "nossa",
+            "gosto", "gostei", "prefiro", "adoro", "odeio", "quero",
+            "uso", "trabalho", "moro", "estudo",
             "esp32", "arduino", "python", "código",
         ]
         for keyword in save_keywords:

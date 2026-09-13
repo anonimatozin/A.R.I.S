@@ -45,7 +45,7 @@ class MultiProviderChat:
         if groq_key:
             try:
                 client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-                model = os.getenv("ARIS_CHAT_MODEL", "llama-3.3-70b-versatile")
+                model = os.getenv("ARIS_CHAT_MODEL", "openai/gpt-oss-120b")
                 self._providers.append(AIProvider("groq", client, model))
                 if self._logger:
                     self._logger.info(f"Provider Groq inicializado: {model}")
@@ -58,7 +58,7 @@ class MultiProviderChat:
         if gemini_key:
             try:
                 client = OpenAI(api_key=gemini_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
-                model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+                model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
                 self._providers.append(AIProvider("gemini", client, model))
                 if self._logger:
                     self._logger.info(f"Provider Gemini inicializado: {model}")
@@ -109,6 +109,23 @@ class MultiProviderChat:
         "ollama": ollama_limiter,
     }
 
+    def _trim_history(self, messages: list[dict], max_chars: int = 6000) -> list[dict]:
+        """Mantém o contexto dentro do limite do modelo (evita 413/TPM).
+
+        Preserva o system_prompt e as mensagens mais recentes cabíveis.
+        """
+        system = messages[0] if messages and messages[0].get("role") == "system" else None
+        rest = messages[1:] if system else messages
+        kept = []
+        budget = max_chars
+        for m in reversed(rest):
+            budget -= len(m.get("content", "") or "")
+            if budget < 0:
+                break
+            kept.append(m)
+        kept.reverse()
+        return ([system] if system else []) + kept
+
     def send(self, message: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
         """Envia mensagem com fallback automático entre provedores.
 
@@ -122,6 +139,10 @@ class MultiProviderChat:
         """
         if not self._providers:
             return "Nenhum provedor de IA configurado. Defina GROQ_API_KEY, GEMINI_API_KEY ou instale Ollama."
+
+        # Provedores podem falhar de forma temporária; reiniciar o ciclo permite retry.
+        for p in self._providers:
+            p.available = True
 
         self._history.append({"role": "user", "content": message})
 
@@ -142,7 +163,7 @@ class MultiProviderChat:
                 continue
 
             try:
-                messages = list(self._history)
+                messages = self._trim_history(self._history)
                 response = provider.client.chat.completions.create(
                     model=provider.model,
                     messages=messages,
@@ -172,7 +193,10 @@ class MultiProviderChat:
                 continue
 
         # Todos falharam
-        error_msg = f"Todos os provedores falharam. Último erro: {last_error}"
+        if last_error is None:
+            error_msg = "Nenhum provedor respondeu. Verifique as chaves no .env (GROQ_API_KEY, GEMINI_API_KEY)."
+        else:
+            error_msg = f"Todos os provedores falharam. Último erro: {last_error}"
         if self._logger:
             self._logger.error(error_msg)
         return error_msg

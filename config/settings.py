@@ -70,7 +70,7 @@ class Settings:
         object.__setattr__(self, "VOICE_VOLUME", int(os.getenv("ARIS_VOICE_VOLUME", "100")))
         object.__setattr__(self, "GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
         object.__setattr__(self, "GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
-        object.__setattr__(self, "CHAT_MODEL", os.getenv("ARIS_CHAT_MODEL", "llama-3.3-70b-versatile"))
+        object.__setattr__(self, "CHAT_MODEL", os.getenv("ARIS_CHAT_MODEL", "openai/gpt-oss-120b"))
         object.__setattr__(self, "MEMORY_ROOT", Path(os.getenv("ARIS_MEMORY_ROOT", str(self.BASE_DIR / "data" / "memory"))))
         object.__setattr__(self, "SCHEDULER_DIR", self.DATA_DIR)
         object.__setattr__(self, "SAFETY_PASSWORD", os.getenv("ARIS_SAFETY_PASSWORD", ""))

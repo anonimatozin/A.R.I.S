@@ -53,21 +53,44 @@ class DeterministicEngine:
     RULES: list[tuple[str, str, str, dict[str, Any]]] = [
         (r"(?i)(uso|carga|percentual)\s*(da|de)\s*(cpu)", "sys", "analyze", {}),
         (r"(?i)(cpu|processador)", "sys", "analyze", {}),
-        (r"(?i)(ram|memória\s*do\s*sistema|memoria)", "sys", "analyze", {}),
+        (r"(?i)(ram|uso\s*de\s*memoria|memoria\s*(usada|livre|disponivel|total|em\s*uso)|memoria\s*do\s*sistema)", "sys", "analyze", {}),
+        (r"(?i)^\s*(memoria|ram)\s*$", "sys", "analyze", {}),
         (r"(?i)(uso\s*de\s*disco|disco\s*rigido|hd|ssd)", "sys", "analyze", {}),
+        (r"(?i)(status|situacao|diagnostico|informacoes|estado)\s*(do|da|de)?\s*(sistema|system|pc|computador|maquina|equipamento)", "sys", "analyze", {}),
         (r"(?i)(clima|previsão|previsao|tempo\s*(em|de|na|no))", "weather", "now", {"city": ""}),
         (r"(?i)temperatura", "weather", "now", {"city": ""}),
+        (r"(?i)(liste\s+minhas\s+memorias|listar\s+memorias|minhas\s+memorias|buscar\s+memorias|procure\s+memorias)", "search", "search", {"query": ""}),
+        (r"(?i)o\s*que\s+(voce|vc)\s+(sabe|lembra)\s+sobre", "search", "search", {"query": ""}),
+        (r"(?i)\b(salve|guarde|memorize|memoriza|anota|registra|guardar)\s+(que|isso|ist.o|o|a)?.?", "remember", "save", {}),
         (r"(?i)(pesquis|busca|procura|google)", "websearch", "search", {"query": ""}),
+        (r"(?i)\b(piada|piadinha|charada)\b", "entertainment", "joke", {}),
+        (r"(?i)\b(curiosidade|curiosidades)\b", "entertainment", "curiosity", {}),
+        (r"(?i)\b(citacao|citação|frase\s+famosa|quote)\b", "entertainment", "quote", {}),
         (r"(?i)(lembrete|lembrar|agenda|pomodoro|timer|cronômetro|cronometro)", "scheduler", "list", {}),
-        (r"(?i)(abre|abra|abrir|abriria)\s+(o\s+|a\s+)?(discord|spotify|youtube|chrome|firefox|notepad|calculadora|navegador|explorer)", "desktop", "open_app", {"app": ""}),
+        (r"(?i)(abre|abra|abrir|abriria)\s+(o\s+|a\s+)?(discord|spotify|youtube|chrome|firefox|notepad|bloco\s*de\s*notas|calculadora|navegador|explorer)", "desktop", "open_app", {"app": ""}),
         (r"(?i)^contexto$|^o\s*que\s*estou\s*fazendo$", "context", "detect", {}),
         (r"(?i)^status\s*(do|da)\s*(hardware|esp32)$", "hardware", "status", {}),
+        (r"(?i)(?:o\s*que|oque)\s+(?:voce|vc)\s+est[áa]\s+vendo", "vision", "analyze", {}),
+        (r"(?i)\b(?:veja|ver|olhe|olha)\b\s+o\s+que\s+est[áa]\s+acontecendo", "vision", "analyze", {}),
+        (r"(?i)(encontre|encontrar|acha|ache|detecta|detecte|procure|procura|procuro).{0,25}\berro", "vision", "errors", {}),
+        (r"(?i)\bprocur[ae]\b\s+por\s+(.+?)(?:\s+(?:em|na|nessa)\s+tela|$)", "vision", "find", {"query": ""}),
+        (r"(?i)leia\s+o\s+que\s+est[áa]\s+aparecendo", "vision", "read", {}),
+        (r"(?i)(o\s*que|oque).{0,30}\b(percebendo|percebe|vendo|ouvindo|observando|notando)\b", "perception", "status", {}),
+        (r"(?i)^\s*percep[çc][ãa]o\s*$", "perception", "status", {}),
+        (r"(?i)(quais.{0,20}\bsensores\b|sensores\s+(ativos|dispon[ií]veis|conectados|do\s+sistema|no\s+sistema))", "perception", "sensors", {}),
+        (r"(?i)(o\s*que|oque)\s+(chamou|atraiu|mereceu).{0,20}(aten[çc][ãa]o)", "perception", "attention", {}),
+        (r"(?i)(c[âa]mera|camera).{0,25}(dispon[ií]vel|funcionando|ativad|ligad|conectad|est[áa])", "perception", "camera", {}),
+        (r"(?i)(ative|desative|ligue|desligue|habilite|desabilite|ativa|desativa)\s+(a\s+)?(percep[çc][ãa]o|sensores)", "perception", "toggle", {}),
+        (r"(?i)(analis|analiz|veja|ver\b|olha|leia|ler|descreva|examine|observ)\w*\s+(?:a\s+|minha\s+)?tela", "vision", "analyze", {}),
+        (r"(?i)(?:o\s*que|oque)\s*(?:tem|aparece|est[áa]\s+(?:aberto|aparecendo|acontecendo))\w*\s+(?:na|em)\s+tela", "vision", "analyze", {}),
+        (r"(?i)(captur|captar|print|screenshot|fotograf)\w*\s+(?:a\s+|da\s+|de\s+)?tela|screenshot", "awareness", "capture", {}),
     ]
 
     # App canonicalização
     APPS = {
         "discord": "discord", "spotify": "spotify", "youtube": "youtube",
         "chrome": "chrome", "firefox": "firefox", "notepad": "notepad",
+        "bloco de notas": "notepad", "bloco": "notepad",
         "calculadora": "calculator", "navegador": "chrome",
         "explorer": "windows explorer",
     }
@@ -94,13 +117,27 @@ class DeterministicEngine:
                     params.pop("city")
             elif action == "search":
                 words = query.replace(match.group(0), " ").strip()
-                params["query"] = words or params["query"]
+                # "sabe sobre mim/voce/eu..." -> listar tudo (query vazia)
+                noise = {"mim", "voce", "vc", "eu", "de", "me", "sobre", "minha", "minhas"}
+                if not words or all(w in noise for w in words.split()):
+                    params["query"] = ""
+                else:
+                    params["query"] = words or params["query"]
+            elif action == "save" and module == "remember":
+                params["text"] = query.replace(match.group(0), " ").strip()
             elif action == "open_app":
                 app = match.group(0).lower()
                 for name, canonical in self.APPS.items():
                     if name in app:
                         params["app"] = canonical
                         break
+            elif action == "toggle":
+                params["target"] = (
+                    "off" if re.search(r"(?i)(desative|desligue|desabilite|desativa|desliga)", query)
+                    else "on"
+                )
+            elif action == "find" and module == "vision":
+                params["query"] = (match.group(1) or "").strip() if match.groups() else ""
 
             intent = Intent(module=module, action=action, params=params, confidence=0.9)
             if self._logger:

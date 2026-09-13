@@ -143,6 +143,13 @@ class IntentAnalyzer:
             params=["action", "query", "interval"],
         )
         self.register_module(
+            name="vision",
+            description="Vision Engine (visão computacional: tela, OCR, VLM)",
+            triggers=["ver a tela", "analisar a tela", "ler a tela", "descrever a tela",
+                       "o que está na tela", "encontrar erro na tela", "visão"],
+            params=["action", "query", "question"],
+        )
+        self.register_module(
             name="redact",
             description="Auto-redação de dados sensíveis",
             triggers=["dados sensíveis", "redigir", "emails", "senhas", "tokens",

@@ -148,15 +148,34 @@ class HybridVoice:
             while pygame.mixer.music.get_busy():
                 pygame.time.wait(100)
         except ImportError:
-            # Fallback: usar Windows MCI
+            # Fallback: usar Windows MCI, aguardando a duração real do áudio
             try:
                 import ctypes
+                import time
                 ctypes.windll.winmm.mciSendStringW(
                     f'open "{tmp_file}" type mpegvideo alias aris_speak', None, 0, None
                 )
+
+                length_buf = ctypes.create_unicode_buffer(64)
+                ctypes.windll.winmm.mciSendStringW(
+                    "status aris_speak length", length_buf, 64, None
+                )
+                try:
+                    total_ms = int(length_buf.value)
+                except (ValueError, TypeError):
+                    total_ms = 0
+                max_seconds = (total_ms / 1000.0 + 2.0) if total_ms > 0 else 60.0
+
                 ctypes.windll.winmm.mciSendStringW("play aris_speak", None, 0, None)
-                import time
-                time.sleep(3)
+                started = time.monotonic()
+                while time.monotonic() - started < max_seconds:
+                    mode_buf = ctypes.create_unicode_buffer(64)
+                    ctypes.windll.winmm.mciSendStringW(
+                        "status aris_speak mode", mode_buf, 64, None
+                    )
+                    if mode_buf.value.strip().lower() != "playing":
+                        break
+                    time.sleep(0.25)
                 ctypes.windll.winmm.mciSendStringW("close aris_speak", None, 0, None)
             except Exception:
                 pass
@@ -221,6 +240,11 @@ class HybridVoice:
     def stop(self) -> None:
         """Para a fala atual."""
         if self._tts_engine == "edge-tts":
+            try:
+                import ctypes
+                ctypes.windll.winmm.mciSendStringW("stop aris_speak", None, 0, None)
+            except Exception:
+                pass
             try:
                 import pygame
                 pygame.mixer.music.stop()

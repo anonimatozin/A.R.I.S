@@ -8,7 +8,7 @@ componentes consultam.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from core.neural.events import Event
@@ -39,6 +39,17 @@ class HardwareState:
     current_led_state: str = "unknown"
 
 
+@dataclass
+class PerceptionState:
+    """Estado da camada de percepção (sensores + atenção atual)."""
+    enabled: bool = False
+    active_sensors: int = 0
+    sensors: dict[str, str] = field(default_factory=dict)
+    last_attention: str = "IGNORE"
+    attention_score: float = 0.0
+    attention_focus: str = ""
+
+
 class GlobalState:
     """Estado global coerente do sistema.
 
@@ -55,6 +66,7 @@ class GlobalState:
         self.voice = VoiceState()
         self.scheduler = SchedulerState()
         self.hardware = HardwareState()
+        self.perception = PerceptionState()
         self.event_history: list[Event] = []
         self.failure_history: list[str] = []
         self._history_maxlen = 50
@@ -139,6 +151,24 @@ class GlobalState:
         if simulation is not None:
             self.hardware.simulation = simulation
 
+    def update_perception(self, *, enabled: bool | None = None, active_sensors: int | None = None,
+                          sensors: dict[str, str] | None = None,
+                          last_attention: str | None = None, attention_score: float | None = None,
+                          attention_focus: str | None = None) -> None:
+        """Atualiza o sub-estado de percepção."""
+        if enabled is not None:
+            self.perception.enabled = enabled
+        if active_sensors is not None:
+            self.perception.active_sensors = active_sensors
+        if sensors is not None:
+            self.perception.sensors = dict(sensors)
+        if last_attention is not None:
+            self.perception.last_attention = last_attention
+        if attention_score is not None:
+            self.perception.attention_score = attention_score
+        if attention_focus is not None:
+            self.perception.attention_focus = attention_focus
+
     # ── Snapshot ─────────────────────────────────────────────
 
     def snapshot(self) -> dict[str, Any]:
@@ -162,6 +192,14 @@ class GlobalState:
                 "available": self.hardware.available,
                 "simulation": self.hardware.simulation,
             },
+            "perception": {
+                "enabled": self.perception.enabled,
+                "active_sensors": self.perception.active_sensors,
+                "sensors": dict(self.perception.sensors),
+                "last_attention": self.perception.last_attention,
+                "attention_score": self.perception.attention_score,
+                "attention_focus": self.perception.attention_focus,
+            },
         }
 
     def describe(self) -> str:
@@ -175,6 +213,10 @@ class GlobalState:
         parts.append(
             f"Voz: {'on' if snap['voice']['enabled'] else 'off'} | "
             f"HW: {'conectado' if snap['hardware']['connected'] else 'offline'}"
+        )
+        parts.append(
+            f"Percepção: {'on' if snap['perception']['enabled'] else 'off'} | "
+            f"atenção: {snap['perception']['last_attention']}"
         )
         return " | ".join(parts)
 

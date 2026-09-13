@@ -112,9 +112,14 @@ class AdvancedInterpreter:
                 "params": ["action", "name", "type", "content", "query"],
             },
             "awareness": {
-                "description": "Desktop awareness: captura de tela, OCR, monitoramento",
-                "actions": ["tela", "captura", "ocr", "screenshot", "monitorar"],
+                "description": "Desktop awareness: captura de tela, análise da tela, OCR, monitoramento",
+                "actions": ["tela", "captura", "ocr", "screenshot", "analisar", "monitorar"],
                 "params": ["action", "query", "interval"],
+            },
+            "vision": {
+                "description": "Vision Engine: visão computacional — analisa a tela (OCR via Tesseract + modelo de visão Ollama/Gemini), encontra texto na tela, detecta erros, descreve a imagem",
+                "actions": ["veja a tela", "analise a tela", "leia a tela", "descreva a tela", "encontre erro na tela", "procure por", "o que está aparecendo", "câmera disponível"],
+                "params": ["action", "query", "question"],
             },
             "browser": {
                 "description": "Automação de navegador web",
@@ -353,7 +358,9 @@ IMPORTANTE:
 
     def _get_context_string(self) -> str:
         """Gera string de contexto."""
-        if not self._context.last_topic and not self._context.last_app:
+        recent = list(self._context_history)[-3:]
+
+        if not self._context.last_topic and not self._context.last_app and not recent:
             return "Nenhum contexto anterior ainda (primeira interação)."
 
         parts = []
@@ -366,12 +373,13 @@ IMPORTANTE:
         if self._context.session_goals:
             parts.append(f"Objetivos da sessão: {', '.join(self._context.session_goals[-3:])}")
 
-        # Últimas 3 interações
-        recent = list(self._context_history)[-3:]
+        # Últimas 3 interações (operador e resposta do A.R.I.S.)
         if recent:
             parts.append("\nÚltimas interações:")
             for h in recent:
                 parts.append(f"  - Operador: \"{h['message'][:80]}\"")
+                if h.get("response"):
+                    parts.append(f"    A.R.I.S.: \"{h['response'][:150]}\"")
 
         return "\n".join(parts) if parts else "Nenhum contexto anterior."
 

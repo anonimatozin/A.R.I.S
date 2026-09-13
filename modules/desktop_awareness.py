@@ -4,6 +4,9 @@ Monitora a tela em tempo real e extrai informações via OCR.
 Inspirado em vierisid/aris e isair/aris.
 """
 
+import os
+import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -28,6 +31,31 @@ except ImportError:
     _PIL = False
 
 
+def _find_tesseract() -> str | None:
+    """Localiza o executável do Tesseract (PATH ou instalações comuns).
+
+    O utilitário `subprocess`/`pytesseract` depende do binário existir no
+    PATH; quando instalado via winget/UB-Mannheim e a sessão já está
+    aberta, o PATH pode não ter sido atualizado — por isso verifica-se
+    também a localização padrão.
+    """
+    if not _TESSERACT:
+        return None
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    candidates = [
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "Programs", "Tesseract-OCR", "tesseract.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 class DesktopAwareness:
     """Monitor de tela em tempo real."""
 
@@ -48,9 +76,34 @@ class DesktopAwareness:
     def available(self) -> bool:
         return _PYAUTOGUI and _PIL
 
+    def _tesseract_present(self) -> bool:
+        """Verifica se o binário do Tesseract existe (o import não basta).
+
+        Apesar de o pacote `pytesseract` estar instalado, o executável
+        precisa existir no PATH; sem ele o OCR falha em runtime. Ao
+        confirmar o binário, também aponta o pytesseract para ele.
+        """
+        if not (_TESSERACT and _PIL):
+            return False
+        if not getattr(self, "_tesseract_check_done", False):
+            cmd = _find_tesseract()
+            ok = False
+            if cmd is not None:
+                try:
+                    result = subprocess.run(
+                        [cmd, "--version"], capture_output=True, timeout=5)
+                    ok = result.returncode == 0
+                except Exception:
+                    ok = False
+                if ok:
+                    pytesseract.pytesseract.tesseract_cmd = cmd
+            self._tesseract_ok = ok
+            self._tesseract_check_done = True
+        return self._tesseract_ok
+
     @property
     def ocr_available(self) -> bool:
-        return _TESSERACT and _PIL
+        return self._tesseract_present()
 
     def capture_screenshot(self, filename: str | None = None) -> str | None:
         """Captura uma screenshot.
@@ -100,6 +153,34 @@ class DesktopAwareness:
             return text.strip()
         except Exception as e:
             return f"Erro OCR: {e}"
+
+    def describe_screen(self) -> dict:
+        """Analisa a tela atual: janela ativa + texto visível (via OCR).
+
+        Nunca inventa conteúdo: se o OCR não estiver disponível, retorna
+        apenas a janela ativa e um texto vazio.
+
+        Returns:
+            dict com window, text, ocr_available, screenshot e summary.
+        """
+        window = self.get_active_window_info()
+        result = {
+            "window": window,
+            "text": "",
+            "ocr_available": False,
+            "screenshot": None,
+            "summary": "",
+        }
+
+        if _PYAUTOGUI:
+            result["screenshot"] = self.capture_screenshot()
+
+        if self.ocr_available:
+            text = self.extract_text_from_screen()
+            result["ocr_available"] = True
+            result["text"] = text
+            result["summary"] = text[:400]
+        return result
 
     def get_screen_text(self, use_cache: bool = True) -> str:
         """Retorna o texto da tela (com cache)."""

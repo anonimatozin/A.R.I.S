@@ -266,6 +266,32 @@ class TestReasoningRouter:
         engine = DeterministicEngine(logger=logger)
         assert not engine.can_handle("__import__('os').system('x')")
 
+    def test_screen_analysis_deterministic(self, logger):
+        engine = DeterministicEngine(logger=logger)
+        for query in ("analise minha tela", "analize minha tela",
+                      "o que tem na tela", "descreva a tela",
+                      "veja a tela"):
+            intents = engine.parse(query)
+            assert intents, f"deveria rotear: {query!r}"
+            assert intents[0].module == "vision"
+            assert intents[0].action == "analyze"
+
+    def test_screen_errors_deterministic(self, logger):
+        intents = DeterministicEngine(logger=logger).parse("encontre o erro na tela")
+        assert intents and intents[0].module == "vision"
+        assert intents[0].action == "errors"
+
+    def test_screen_find_deterministic(self, logger):
+        intents = DeterministicEngine(logger=logger).parse("procure por spotify na tela")
+        assert intents and intents[0].module == "vision"
+        assert intents[0].action == "find"
+        assert intents[0].params.get("query") == "spotify"
+
+    def test_screen_capture_deterministic(self, logger):
+        intents = DeterministicEngine(logger=logger).parse("captura a tela")
+        assert intents and intents[0].module == "awareness"
+        assert intents[0].action == "capture"
+
 
 # ── Decision Engine ─────────────────────────────────────────
 
@@ -444,3 +470,52 @@ class TestNeuralCore:
         stats = neural.get_stats()
         assert stats["state"]["current_mode"] == "idle"
         assert "security" in stats
+
+
+# ── Contexto de conversa e análise de tela ──────────────────
+
+class TestConversationContext:
+    def test_context_includes_aris_response(self):
+        from core.advanced_interpreter import AdvancedInterpreter
+        ai = AdvancedInterpreter()
+        ai.update_context("analise minha tela",
+                          "Analisei a tela. Janela ativa: OpenCode. Texto: ...",
+                          [])
+        prompt = ai.build_interpretation_prompt("e depois?")
+        assert "Janela ativa: OpenCode" in prompt
+
+    def test_context_without_topic_still_shows_history(self):
+        from core.advanced_interpreter import AdvancedInterpreter
+        ai = AdvancedInterpreter()
+        ai.update_context("abc", "resp", [])
+        assert "A.R.I.S.: \"resp\"" in ai._get_context_string()
+
+
+class TestHandlersScreenAnalysis:
+    def test_handle_awareness_analyze_returns_summary(self):
+        from core.handlers import handle_awareness
+
+        class FakeAwareness:
+            def describe_screen(self):
+                return {
+                    "window": {"title": "Visual Studio Code", "process": "Code.exe"},
+                    "text": "linha 1\nlinha 2",
+                    "ocr_available": True,
+                    "screenshot": "C:/tmp/scr.png",
+                    "summary": "linha 1\nlinha 2",
+                }
+
+        out = handle_awareness("analyze", {}, awareness=FakeAwareness())
+        assert out
+        assert "Visual Studio Code" in out
+        assert "linha 1" in out
+
+    def test_handle_awareness_capture_returns_path(self):
+        from core.handlers import handle_awareness
+
+        class FakeAwareness:
+            def capture_screenshot(self):
+                return "C:/tmp/scr.png"
+
+        out = handle_awareness("capture", {}, awareness=FakeAwareness())
+        assert "C:/tmp/scr.png" in out

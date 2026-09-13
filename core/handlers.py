@@ -26,7 +26,10 @@ def handle_weather(action: str, params: dict, **ctx) -> str:
     for line in lines:
         print(f"  {line}")
     print()
-    return ""
+    if "Indisponível" in report or "Nenhuma fonte" in report:
+        return "Não consegui obter a previsão do tempo no momento."
+    first = next((ln.strip() for ln in lines if ln.strip()), "previsão indisponível")
+    return f"Previsão do tempo: {first}"
 
 
 # ── Web Search ──────────────────────────────────────────────
@@ -41,6 +44,10 @@ def handle_websearch(action: str, params: dict, **ctx) -> str:
         for line in lines:
             print(f"  {line}")
         print()
+        if "Nenhum resultado" in result:
+            return "Não encontrei resultados para essa busca."
+        first = next((ln.strip() for ln in lines if ln.strip()), "resultado")
+        return f"Sobre a busca: {first}"
     return ""
 
 
@@ -81,7 +88,16 @@ def handle_sys(action: str, params: dict, **ctx) -> str:
         print(f"  {Terminal.colorize(alert, color)}")
 
     Terminal.print_separator()
-    return ""
+
+    major = [a for a in alerts if "AVISO" in a or "CRÍTICO" in a]
+    if any("CRÍTICO" in a for a in alerts):
+        status = "atenção, existem problemas críticos no sistema"
+    elif major:
+        status = "todos os sistemas aparentam estar funcionando, com alguns avisos"
+    else:
+        status = "todos os sistemas operacionais normais"
+    return (f"Análise do sistema: CPU em {cpu['usage_percent']} por cento, "
+            f"memória em {mem['percent']}, disco em {disk['percent']}. {status}.")
 
 
 # ── Desktop Tools ───────────────────────────────────────────
@@ -90,7 +106,7 @@ def handle_sys(action: str, params: dict, **ctx) -> str:
 def handle_desktop(action: str, params: dict, **ctx) -> str:
     result = ctx["desktop"].execute_action(action, params)
     print(f"  {result}")
-    return ""
+    return result
 
 
 # ── Scheduler ───────────────────────────────────────────────
@@ -108,22 +124,27 @@ def handle_scheduler(action: str, params: dict, **ctx) -> str:
                 dt = datetime.fromisoformat(when)
                 task = scheduler.add_reminder(title, dt)
                 print(f"  Lembrete criado: {task.id} — {task.title}")
+                return f"Lembrete criado para {title}."
             except ValueError:
                 print("  Formato de data inválido. Use: YYYY-MM-DD HH:MM")
+                return "O formato da data está inválido."
 
     elif action == "list":
         tasks = scheduler.list_tasks()
         print(scheduler.format_task_list(tasks))
+        return f"Você tem {len(tasks)} dependecias pendentes." if tasks else "Nenhuma dependencia pendente."
 
     elif action == "cancel":
         task_id = params.get("task_id", "")
         result = scheduler.cancel_task(task_id)
         print(f"  {result}")
+        return result
 
     elif action == "pomodoro":
         minutes = params.get("minutes", 25)
         result = scheduler.start_pomodoro(minutes)
         print(f"  {result}")
+        return result
 
     return ""
 
@@ -137,7 +158,8 @@ def handle_notify(action: str, params: dict, **ctx) -> str:
     if message:
         result = ctx["notifications"].notify(title, message)
         print(f"  {result}")
-    return ""
+        return result
+    return "Notificação sem conteúdo."
 
 
 # ── Context Detector ────────────────────────────────────────
@@ -149,7 +171,8 @@ def handle_context(action: str, params: dict, **ctx) -> str:
     for line in context_text.split("\n"):
         print(f"  {line}")
     print()
-    return ""
+    first = next((ln.strip() for ln in context_text.split("\n") if ln.strip()), "contexto indisponível")
+    return f"Contexto atual: {first}"
 
 
 # ── Safety ──────────────────────────────────────────────────
@@ -171,24 +194,40 @@ def handle_entertainment(action: str, params: dict, **ctx) -> str:
     ent = ctx["entertainment"]
 
     if action == "joke":
-        print(f"  {ent.get_random_joke()}")
+        text = ent.get_random_joke()
+        print(f"  {text}")
+        return text
     elif action == "curiosity":
-        print(f"  {ent.get_random_curiosity()}")
+        text = ent.get_random_curiosity()
+        print(f"  {text}")
+        return text
     elif action == "quote":
-        print(f"  {ent.get_random_quote()}")
+        text = ent.get_random_quote()
+        print(f"  {text}")
+        return text
     elif action == "dice":
         sides = params.get("sides", 6)
         count = params.get("count", 1)
-        print(f"  {ent.roll_dice(sides, count)}")
+        text = ent.roll_dice(sides, count)
+        print(f"  {text}")
+        return f"Você tirou: {text}"
     elif action == "coin":
-        print(f"  {ent.coin_flip()}")
+        text = ent.coin_flip()
+        print(f"  {text}")
+        return text
     elif action == "8ball":
         question = params.get("question", "")
-        print(f"  {ent.eight_ball(question)}")
+        text = ent.eight_ball(question)
+        print(f"  {text}")
+        return text
     elif action == "card":
-        print(f"  {ent.get_daily_card()}")
+        text = ent.get_daily_card()
+        print(f"  {text}")
+        return text
     elif action == "game":
-        print(f"  {ent.guess_number_game()}")
+        text = ent.guess_number_game()
+        print(f"  {text}")
+        return text
 
     return ""
 
@@ -269,28 +308,143 @@ def handle_awareness(action: str, params: dict, **ctx) -> str:
     aw = ctx["awareness"]
 
     if action == "status":
-        print(f"  {aw.format_status()}")
+        status = aw.format_status()
+        print(f"  {status}")
+        return "Tela monitorada com awareness."
+
+    elif action in ("analyze", "describe"):
+        info = aw.describe_screen()
+        win = info.get("window") or {}
+        title = win.get("title") or "desconhecida"
+        if info.get("screenshot"):
+            print(f"  Screenshot: {info['screenshot']}")
+        if info.get("ocr_available") and info.get("text"):
+            lines = [ln.strip() for ln in info["text"].splitlines() if ln.strip()][:12]
+            print("  Texto na tela:")
+            for ln in lines:
+                print(f"    • {ln[:90]}")
+            prev = " ".join(lines)
+            print(f"  Janela ativa: {title}")
+            return (f"Analisei a tela. Janela ativa: {title}. "
+                    f"Texto visível: {prev[:180]}.")
+        print(f"  Janela ativa: {title}")
+        return (f"Sua janela ativa é {title}. O OCR não está ativo neste sistema; "
+                "posso capturar a imagem se você desejar.")
 
     elif action == "capture":
         path = aw.capture_screenshot()
         if path:
             print(f"  Screenshot: {path}")
+            return f"Screenshot salva: {path}"
+        return "Não foi possível capturar a tela."
 
     elif action == "ocr":
         text = aw.extract_text_from_screen()
         print(f"  Texto na tela:\n{text[:500]}")
+        if text.startswith("Erro") or "não disponível" in text:
+            return text[:160]
+        return "Texto da tela extraído (veja o detalhe acima)."
 
     elif action == "search":
         query = params.get("query", "")
         result = aw.search_on_screen(query)
         if result["found"]:
             print(f"  ✅ Encontrado: {result['context']}")
-        else:
-            print("  ❌ Não encontrado na tela")
+            return f"Encontrei '{query}' na tela."
+        print("  ❌ Não encontrado na tela")
+        return f"Não encontrei '{query}' na tela."
 
     elif action == "monitor":
         aw.monitor_screen(interval=params.get("interval", 30))
         print("  Monitoramento iniciado")
+        return "Monitoramento da tela iniciado."
+
+    return ""
+
+
+# ── Vision Engine (visão computacional) ────────────────────
+
+@registry.register_intent("vision", description="Vision Engine (captura, OCR, VLM, análise de tela)")
+def handle_vision(action: str, params: dict, **ctx) -> str:
+    vision = ctx["vision"]
+
+    if action == "status":
+        print(f" {vision.format_status()}")
+        return "Sistema de visão computacional ativo (veja o detalhe acima)."
+
+    elif action == "camera":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        status = vision.camera_status()
+        print(f" {status}")
+        return status
+
+    elif action == "read" or action == "ocr":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        ocr = vision.read_screen()
+        if not ocr.available:
+            message = ocr.note or "leitura de texto indisponível"
+            print(f" {message}")
+            return f"Não consegui ler a tela agora ({message})."
+        lines = [ln.strip() for ln in ocr.lines if ln.strip()]
+        for ln in lines[:15]:
+            print(f"   • {ln[:90]}")
+        return f"Texto da tela extraído ({len(' '.join(ocr.lines))} caracteres)."
+
+    elif action == "errors":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        errors = vision.detect_errors()
+        if errors:
+            for term in errors:
+                print(f"   • possível erro: {term}")
+            return "Possíveis erros detectados na tela: " + ", ".join(errors) + "."
+        print("  Nenhum termo de erro visível na tela.")
+        return "Não detectei erros visíveis na tela."
+
+    elif action == "find":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        query = params.get("query", "")
+        if not query:
+            return "Para procurar texto na tela, diga 'procure por <texto>'."
+        result = vision.find_on_screen(query)
+        if result["found"]:
+            pos = result["position"]
+            print(f"  Encontrado em ({pos['x']:.0f}, {pos['y']:.0f}) — confiança {result['confidence']:.2f}")
+            return f"Encontrei '{query}' na tela."
+        reason = result.get("reason", "texto não visível")
+        print(f"  Não encontrado: {reason}")
+        return f"Não encontrei '{query}' na tela ({reason})."
+
+    elif action == "analyze" or action == "describe":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        question = params.get("question", "") or params.get("query", "") or None
+        result = vision.analyze_screen(question=question)
+        if result.vision.available and result.vision.description:
+            print(f"  Descrição visual: {result.vision.description[:300]}")
+        if result.ocr.available and result.ocr.text:
+            print("  Texto na tela:")
+            for ln in result.ocr.lines[:10]:
+                print(f"    • {ln.strip()[:90]}")
+        print(f"  Janela ativa: {result.active_application or 'desconhecida'}")
+        summary = vision.summarize_for_speech(result)
+        if result.errors_detected:
+            for term in result.errors_detected:
+                print(f"  ⚠ possível erro: {term}")
+        return summary
+
+    elif action == "ask":
+        if vision is None:
+            return "Sistema de visão não disponível no momento."
+        question = params.get("question", "") or params.get("query", "") or ""
+        answer = vision.ask(question)
+        if answer:
+            print(f"  {answer[:400]}")
+            return answer[:300]
+        return "Não consegui analisar visualmente agora (sem modelo de visão ativo)."
 
     return ""
 
@@ -524,6 +678,7 @@ def handle_remember(action: str, params: dict, **ctx) -> str:
             tags=tags,
         )
         print(f"  Memória salva: {Terminal.colorize(entry.id, Terminal.CYAN)}")
+        return f"Pronto, memorizei: {text}"
 
     return ""
 
@@ -532,19 +687,30 @@ def handle_remember(action: str, params: dict, **ctx) -> str:
 
 @registry.register_intent("search", description="Buscar memória salva")
 def handle_search_memory(action: str, params: dict, **ctx) -> str:
+    if "query" not in params:
+        return ""
     query = params.get("query", "")
-    if query:
-        memory = ctx["memory"]
-        results = memory.search(query=query)
-        if not results:
-            print("  Nenhuma memória encontrada.")
-        else:
-            Terminal.print_separator()
-            for entry in results:
-                imp_color = Terminal.GREEN if entry.importance >= 7 else Terminal.YELLOW
-                print(f"  [{Terminal.colorize(entry.id, Terminal.CYAN)}] {entry.title}")
-                print(f"    {entry.category.value} | Imp: {Terminal.colorize(str(entry.importance), imp_color)}")
-            Terminal.print_separator()
+    memory = ctx["memory"]
+    results = memory.search(query=query)
+    if not results:
+        print("  Nenhuma memória encontrada.")
+        return (f"Não encontrei nenhuma memória sobre {query}." if query
+                else "Não encontrei nenhuma memória salva sobre você.")
+    else:
+        Terminal.print_separator()
+        spoken = []
+        for entry in results[:3]:
+            imp_color = Terminal.GREEN if entry.importance >= 7 else Terminal.YELLOW
+            print(f"  [{Terminal.colorize(entry.id, Terminal.CYAN)}] {entry.title}")
+            print(f"    {entry.category.value} | Imp: {Terminal.colorize(str(entry.importance), imp_color)}")
+            spoken.append(entry.content or entry.title)
+        if len(results) > 3:
+            print(f"  ... e mais {len(results) - 3} resultado(s).")
+        Terminal.print_separator()
+        total = len(results)
+        if total == 1:
+            return f"Encontrei uma memória: {spoken[0]}."
+        return "Encontrei " + f"{total} memórias" + (f": {'; '.join(spoken)}." if spoken else ".")
 
     return ""
 
@@ -580,6 +746,45 @@ def handle_speak(action: str, params: dict, **ctx) -> str:
     return ""
 
 
+# ── Percepção ───────────────────────────────────────────────
+
+@registry.register_intent("perception", description="Percepção: o que o ARIS percebe (sensores, atenção, câmera)")
+def handle_perception(action: str, params: dict, **ctx) -> str:
+    perception = ctx.get("perception")
+    if perception is None:
+        print("  Percepção indisponível.")
+        return "Percepção indisponível."
+
+    action = (action or "status").lower()
+
+    def _show(text: str) -> str:
+        first = ""
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        for line in lines:
+            print(line)
+        if lines:
+            first = lines[0].strip()
+        return first
+
+    if action == "sensors":
+        return _show(perception.format_sensors())
+    if action == "attention":
+        return _show(perception.format_attention())
+    if action == "camera":
+        return _show(perception.format_camera())
+    if action == "toggle":
+        target = (params or {}).get("target")
+        if target == "off":
+            output = perception.toggle_perception(False)
+        elif target == "on":
+            output = perception.toggle_perception(True)
+        else:
+            output = perception.toggle_perception()
+        print(f"  Percepção {'ativada.' if output else 'desativada.'}")
+        return f"Percepção {'ativada' if output else 'desativada'}."
+    return _show(perception.describe())
+
+
 # ── Safety Level Mapping ────────────────────────────────────
 # 1=SAFE, 2=CAUTION, 3=DANGER, 4=CRITICAL
 
@@ -597,6 +802,7 @@ _SAFETY_LEVELS = {
     "safety": 1,
     "digest": 1,
     "calc": 1,
+    "perception": 1,
 
     # CAUTION (2) — ações que afetam o estado mas são reversíveis
     "desktop": 2,

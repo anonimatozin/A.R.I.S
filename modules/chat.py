@@ -29,7 +29,7 @@ class Chat:
     def __init__(
         self,
         api_key: str,
-        model: str = "llama-3.3-70b-versatile",
+        model: str = "openai/gpt-oss-120b",
         system_prompt: str = "",
         logger: Logger | None = None,
         memory: "MemoryManager | None" = None,

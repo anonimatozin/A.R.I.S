@@ -28,11 +28,43 @@ EVENT_BOOT = "system_boot"
 EVENT_SHUTDOWN = "system_shutdown"
 EVENT_INTERNAL = "internal"
 
+# Tipos de evento da camada de percepção (sensores reais do mundo)
+EVENT_PERCEPTION = "perception.event"
+EVENT_CAMERA = "perception.camera"
+EVENT_MICROPHONE = "perception.microphone"
+EVENT_FILESYSTEM = "perception.filesystem"
+EVENT_NETWORK = "perception.network"
+EVENT_SYSTEM_METRIC = "perception.system_metric"
+
+# Tipos de evento da camada de visão computacional (Vision Engine)
+EVENT_VISION_SCREEN_ANALYZED = "vision.screen_analyzed"
+EVENT_VISION_TEXT_DETECTED = "vision.text_detected"
+EVENT_VISION_ERROR_DETECTED = "vision.error_detected"
+EVENT_VISION_APPLICATION_DETECTED = "vision.application_detected"
+EVENT_VISION_OBJECT_DETECTED = "vision.object_detected"
+
 # Prioridades semânticas (0 = baixa, 100 = altíssima)
 PRIORITY_LOW = 0
 PRIORITY_NORMAL = 50
 PRIORITY_HIGH = 75
 PRIORITY_CRITICAL = 100
+
+# Eventos produzidos pela camada de percepção (filtro de origem).
+PERCEPTION_EVENT_TYPES = frozenset({
+    EVENT_PERCEPTION,
+    EVENT_CAMERA,
+    EVENT_MICROPHONE,
+    EVENT_SCREEN_CHANGED,
+    EVENT_FILESYSTEM,
+    EVENT_NETWORK,
+    EVENT_SYSTEM_METRIC,
+    EVENT_HARDWARE,
+    EVENT_VISION_SCREEN_ANALYZED,
+    EVENT_VISION_TEXT_DETECTED,
+    EVENT_VISION_ERROR_DETECTED,
+    EVENT_VISION_APPLICATION_DETECTED,
+    EVENT_VISION_OBJECT_DETECTED,
+})
 
 
 @dataclass

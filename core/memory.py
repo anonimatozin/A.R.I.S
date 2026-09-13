@@ -1,6 +1,7 @@
 """Gerenciador de memória do A.R.I.S.
 
 Sistema central de armazenamento, recuperação e busca de memórias.
+Backend: SQLite via MemoryDB (substitui JSON index + arquivos avulsos).
 """
 
 import json
@@ -8,8 +9,18 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from core.memory_db import MemoryDB
 from core.memory_models import MemoryCategory, MemoryEntry, Priority
+from core.neural.events import (
+    EVENT_MEMORY_CREATED,
+    EVENT_MEMORY_DELETED,
+    EVENT_MEMORY_RETRIEVED,
+    EVENT_MEMORY_UPDATED,
+    PRIORITY_LOW,
+    Event,
+)
 from utils.logger import Logger
 
 
@@ -18,78 +29,136 @@ class MemoryManager:
 
     Responsável por armazenar, recuperar, buscar e gerenciar
     todas as memórias do A.R.I.S.
+
+    Backend SQLite via MemoryDB. A API pública é idêntica à versão
+    anterior (JSON) — consumidores não precisam mudar.
     """
 
     INDEX_FILE = "memory_index.json"
     METADATA_DIR = "Index"
 
-    def __init__(self, logger: Logger, memory_root: Path | None = None) -> None:
+    def __init__(self, logger: Logger, memory_root: Path | None = None,
+                 db_dir: Path | None = None) -> None:
         """Inicializa o gerenciador de memória.
 
         Args:
             logger: Instância do logger.
-            memory_root: Diretório raiz da memória.
+            memory_root: Diretório raiz da memória (legado, para backups/organizer).
+            db_dir: Diretório do banco SQLite. Se None, usa D:\\ARIS_MEMORY\\ (produção).
         """
         self._logger = logger
-        self._memories: dict[str, MemoryEntry] = {}
-        self._memory_dir = memory_root or (Path(__file__).resolve().parent.parent / "data" / "memory")
-        self._index_path = self._memory_dir / self.METADATA_DIR / self.INDEX_FILE
+        self._memory_dir = memory_root or (
+            Path(__file__).resolve().parent.parent / "data" / "memory"
+        )
+        # db_dir=None → produção (D:\ARIS_MEMORY\ via _resolve_db_dir)
+        # db_dir=path → teste/isolamento
+        self._db = MemoryDB(db_dir=db_dir, logger=logger)
+        self._event_bus: Any = None
 
-        self._setup_directories()
-        self._load_index()
-        # Persistência: garante que o índice exista desde o primeiro boot.
-        # Assim ele não é reconstruído do zero nas execuções seguintes.
-        if not self._index_path.exists():
-            self._save_index()
+        # Migração: se existir índice JSON antigo, importar para SQLite
+        self._migrate_from_json_if_needed()
 
-    def _setup_directories(self) -> None:
-        """Cria a estrutura de pastas da memória."""
-        categories = [
-            "Profile", "Knowledge", "Projects", "Conversations",
-            "Devices", "Automations", "Plugins", "Config",
-            "Cache", "Logs", "Temporary", "Backups", "Archive", "Index",
-        ]
+    def set_event_bus(self, event_bus: Any) -> None:
+        """Define o Event Bus para publicação de eventos de memória."""
+        self._event_bus = event_bus
 
-        created = False
-        for category in categories:
-            dir_path = self._memory_dir / category
-            if not dir_path.exists():
-                dir_path.mkdir(parents=True, exist_ok=True)
-                created = True
-
-        if created:
-            self._logger.info(f"Estrutura de memória criada em: {self._memory_dir}")
-
-    def _load_index(self) -> None:
-        """Carrega o índice de memórias do disco."""
-        if self._index_path.exists():
-            try:
-                with open(self._index_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                for entry_data in data.get("memories", []):
-                    entry = MemoryEntry.from_dict(entry_data)
-                    self._memories[entry.id] = entry
-                self._logger.info(f"Índice carregado: {len(self._memories)} memórias.")
-            except Exception as e:
-                self._logger.error(f"Erro ao carregar índice: {e}")
-        else:
-            self._logger.info("Nenhum índice encontrado. Criando novo.")
-
-    def _save_index(self) -> None:
-        """Salva o índice de memórias no disco."""
+    def _emit(self, event_type: str, payload: dict) -> None:
+        """Publica um evento no bus (se disponível)."""
+        if self._event_bus is None:
+            return
         try:
-            self._index_path.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "version": "1.0",
-                "last_updated": datetime.now().isoformat(),
-                "total_memories": len(self._memories),
-                "memories": [m.to_dict() for m in self._memories.values()],
-            }
-            with open(self._index_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            self._logger.debug(f"Índice salvo: {len(self._memories)} memórias.")
+            self._event_bus.publish(
+                Event(
+                    event_type=event_type,
+                    source="memory",
+                    priority=PRIORITY_LOW,
+                    confidence=1.0,
+                    payload=payload,
+                )
+            )
+        except Exception:
+            pass
+
+    # ── Migração JSON → SQLite ─────────────────────────────────
+
+    def _migrate_from_json_if_needed(self) -> None:
+        """Importa dados do JSON antigo para SQLite (uma única vez)."""
+        index_path = self._memory_dir / self.METADATA_DIR / self.INDEX_FILE
+        if not index_path.exists():
+            return
+
+        try:
+            with open(index_path, encoding="utf-8") as f:
+                data = json.load(f)
+            memories = data.get("memories", [])
+            if not memories:
+                self._logger.info("Índice JSON vazio. Nada a migrar.")
+                return
+
+            count = 0
+            for entry_data in memories:
+                entry = MemoryEntry.from_dict(entry_data)
+                self._db.insert_memory(self._entry_to_row(entry))
+                count += 1
+
+            self._logger.info(f"Migração JSON→SQLite concluída: {count} memórias importadas.")
+
+            # Mover índice antigo para backup
+            backup_dir = self._memory_dir / "_migrated_backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / self.INDEX_FILE
+            if backup_path.exists():
+                backup_path = backup_dir / f"{self.INDEX_FILE}.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            shutil.move(str(index_path), str(backup_path))
+            self._logger.info(f"Índice JSON antigo movido para: {backup_path}")
+
         except Exception as e:
-            self._logger.error(f"Erro ao salvar índice: {e}")
+            self._logger.error(f"Erro na migração JSON→SQLite: {e}")
+
+    # ── Conversão MemoryEntry ↔ Row ────────────────────────────
+
+    @staticmethod
+    def _entry_to_row(entry: MemoryEntry) -> dict:
+        return {
+            "id": entry.id,
+            "category": entry.category.value,
+            "title": entry.title,
+            "content": entry.content,
+            "importance": entry.importance,
+            "priority": entry.priority.value,
+            "tags": json.dumps(entry.tags, ensure_ascii=False),
+            "source": entry.source,
+            "memory_type": "semantic",
+            "created_at": entry.created_at,
+            "last_accessed": entry.last_accessed,
+            "access_count": entry.access_count,
+            "is_permanente": entry.is_permanente,
+        }
+
+    @staticmethod
+    def _row_to_entry(row: dict) -> MemoryEntry:
+        tags_raw = row.get("tags", "[]")
+        try:
+            tags = json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+        except Exception:
+            tags = []
+
+        return MemoryEntry(
+            id=row["id"],
+            title=row["title"],
+            content=row["content"],
+            category=MemoryCategory(row["category"]),
+            importance=row["importance"],
+            priority=Priority(row["priority"]),
+            tags=tags,
+            source=row.get("source", "conversation"),
+            created_at=row["created_at"],
+            last_accessed=row["last_accessed"],
+            access_count=row.get("access_count", 0),
+            is_permanente=bool(row.get("is_permanente")),
+        )
+
+    # ── API pública (idêntica à versão JSON) ───────────────────
 
     def save(
         self,
@@ -102,22 +171,9 @@ class MemoryManager:
         source: str = "conversation",
         is_permanente: bool = False,
     ) -> MemoryEntry:
-        """Salva uma nova memória.
-
-        Args:
-            title: Título da memória.
-            content: Conteúdo da memória.
-            category: Categoria.
-            importance: Importância (1-10).
-            priority: Prioridade.
-            tags: Tags para indexação.
-            source: Origem da informação.
-            is_permanente: Se é permanente.
-
-        Returns:
-            A entrada de memória criada.
-        """
+        """Salva uma nova memória."""
         entry_id = str(uuid.uuid4())[:8]
+        now = datetime.now().isoformat()
         entry = MemoryEntry(
             id=entry_id,
             title=title,
@@ -130,38 +186,43 @@ class MemoryManager:
             is_permanente=is_permanente,
         )
 
-        self._memories[entry_id] = entry
-        self._save_to_disk(entry)
-        self._save_index()
+        row = self._entry_to_row(entry)
+        row["created_at"] = now
+        row["last_accessed"] = now
+        self._db.insert_memory(row)
+
+        self._emit(EVENT_MEMORY_CREATED, {
+            "id": entry_id,
+            "title": title,
+            "category": category.value,
+            "importance": entry.importance,
+        })
 
         self._logger.info(f"Memória salva: [{entry_id}] {title}")
         return entry
 
-    def _save_to_disk(self, entry: MemoryEntry) -> None:
-        """Salva uma memória no disco."""
-        category_dir = self._memory_dir / entry.category.value
-        category_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = category_dir / f"{entry.id}.json"
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(entry.to_json())
-
-        entry.file_path = str(file_path)
-
     def get(self, memory_id: str) -> MemoryEntry | None:
-        """Recupera uma memória pelo ID.
+        """Recupera uma memória pelo ID."""
+        row = self._db.get_memory(memory_id)
+        if not row:
+            return None
 
-        Args:
-            memory_id: ID da memória.
+        # Atualizar access_count e last_accessed
+        now = datetime.now().isoformat()
+        new_count = row.get("access_count", 0) + 1
+        self._db.update_memory(
+            memory_id, last_accessed=now, access_count=new_count
+        )
 
-        Returns:
-            A entrada de memória ou None.
-        """
-        entry = self._memories.get(memory_id)
-        if entry:
-            entry.access()
-            self._save_index()
-        return entry
+        row["last_accessed"] = now
+        row["access_count"] = new_count
+
+        self._emit(EVENT_MEMORY_RETRIEVED, {
+            "id": memory_id,
+            "title": row.get("title", ""),
+        })
+
+        return self._row_to_entry(row)
 
     def search(
         self,
@@ -171,130 +232,85 @@ class MemoryManager:
         tags: list[str] | None = None,
         limit: int = 20,
     ) -> list[MemoryEntry]:
-        """Busca memórias por critérios.
-
-        Args:
-            query: Texto para busca no título/conteúdo.
-            category: Filtrar por categoria.
-            min_importance: Importância mínima.
-            tags: Filtrar por tags.
-            limit: Limite de resultados.
-
-        Returns:
-            Lista de memórias encontradas.
-        """
-        results = list(self._memories.values())
-
-        if query:
-            query_lower = query.lower()
-            results = [
-                m for m in results
-                if query_lower in m.title.lower()
-                or query_lower in m.content.lower()
-                or any(query_lower in tag.lower() for tag in m.tags)
-            ]
-
-        if category:
-            results = [m for m in results if m.category == category]
-
-        if min_importance > 0:
-            results = [m for m in results if m.importance >= min_importance]
-
-        if tags:
-            results = [
-                m for m in results
-                if any(tag in m.tags for tag in tags)
-            ]
-
-        results.sort(key=lambda m: (m.importance, m.access_count), reverse=True)
-        return results[:limit]
+        """Busca memórias por critérios."""
+        cat_value = category.value if category else None
+        rows = self._db.search_memories(
+            query=query,
+            category=cat_value,
+            min_importance=min_importance,
+            tags=tags,
+            limit=limit,
+        )
+        return [self._row_to_entry(r) for r in rows]
 
     def delete(self, memory_id: str, confirm: bool = False) -> bool:
-        """Remove uma memória.
-
-        Args:
-            memory_id: ID da memória.
-            confirm: Confirmação do operador.
-
-        Returns:
-            True se removida com sucesso.
-        """
-        entry = self._memories.get(memory_id)
-        if not entry:
+        """Remove uma memória."""
+        row = self._db.get_memory(memory_id)
+        if not row:
             return False
 
-        if entry.is_permanente and not confirm:
+        is_perm = bool(row.get("is_permanente"))
+        if is_perm and not confirm:
             self._logger.warning(
-                f"Tentativa de apagar memória permanente [{memory_id}]: {entry.title}. "
+                f"Tentativa de apagar memória permanente [{memory_id}]: {row['title']}. "
                 "Requer confirmação."
             )
             return False
 
-        # Criar backup antes de apagar
+        # Backup antes de apagar
         backup_dir = self._memory_dir / "Backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_dir / f"{entry.id}_backup.json"
+        backup_path = backup_dir / f"{memory_id}_backup.json"
         with open(backup_path, "w", encoding="utf-8") as f:
-            f.write(entry.to_json())
+            json.dump(row, f, ensure_ascii=False, indent=2)
 
-        # Remover do disco
-        if entry.file_path and Path(entry.file_path).exists():
-            Path(entry.file_path).unlink()
+        self._db.delete_memory(memory_id)
 
-        # Remover do índice
-        del self._memories[memory_id]
-        self._save_index()
+        self._emit(EVENT_MEMORY_DELETED, {
+            "id": memory_id,
+            "title": row["title"],
+        })
 
-        self._logger.info(f"Memória removida: [{memory_id}] {entry.title} (backup criado)")
+        self._logger.info(f"Memória removida: [{memory_id}] {row['title']} (backup criado)")
         return True
 
     def update(self, memory_id: str, **kwargs) -> MemoryEntry | None:
-        """Atualiza uma memória existente.
-
-        Args:
-            memory_id: ID da memória.
-            **kwargs: Campos a atualizar.
-
-        Returns:
-            A memória atualizada ou None.
-        """
-        entry = self._memories.get(memory_id)
-        if not entry:
+        """Atualiza uma memória existente."""
+        row = self._db.get_memory(memory_id)
+        if not row:
             return None
 
-        for key, value in kwargs.items():
-            if hasattr(entry, key):
-                setattr(entry, key, value)
+        # Converter tags para JSON se fornecido
+        if "tags" in kwargs and isinstance(kwargs["tags"], list):
+            kwargs["tags"] = json.dumps(kwargs["tags"], ensure_ascii=False)
+        if "category" in kwargs and hasattr(kwargs["category"], "value"):
+            kwargs["category"] = kwargs["category"].value
+        if "priority" in kwargs and hasattr(kwargs["priority"], "value"):
+            kwargs["priority"] = kwargs["priority"].value
 
-        self._save_to_disk(entry)
-        self._save_index()
+        self._db.update_memory(memory_id, **kwargs)
+        updated = self._db.get_memory(memory_id)
 
-        self._logger.info(f"Memória atualizada: [{memory_id}] {entry.title}")
-        return entry
+        self._emit(EVENT_MEMORY_UPDATED, {
+            "id": memory_id,
+            "title": row["title"],
+            "fields": list(kwargs.keys()),
+        })
+
+        self._logger.info(f"Memória atualizada: [{memory_id}] {row['title']}")
+        return self._row_to_entry(updated) if updated else None
 
     def get_stats(self) -> dict:
-        """Retorna estatísticas da memória.
+        """Retorna estatísticas da memória."""
+        db_stats = self._db.stats()
 
-        Returns:
-            Dicionário com estatísticas.
-        """
-        total = len(self._memories)
-        categories = {}
-        total_importance = 0
-
-        for entry in self._memories.values():
-            cat = entry.category.value
-            categories[cat] = categories.get(cat, 0) + 1
-            total_importance += entry.importance
-
-        # Espaço em disco
+        # Espaço em disco (apenas diretório de backups legado)
         disk_usage = 0
         if self._memory_dir.exists():
             for file in self._memory_dir.rglob("*"):
                 if file.is_file():
                     disk_usage += file.stat().st_size
 
-        # Espaço livre
         free_space = 0
         try:
             _disk_total, _disk_used, _disk_free = shutil.disk_usage(str(self._memory_dir))
@@ -302,27 +318,30 @@ class MemoryManager:
         except Exception:
             pass
 
+        total = db_stats["total_memories"]
+        categories = db_stats.get("by_category", {})
+
+        # Média de importância
+        all_rows = self._db.get_all_memories()
+        avg_imp = 0.0
+        if all_rows:
+            avg_imp = round(
+                sum(r.get("importance", 5) for r in all_rows) / len(all_rows), 2
+            )
+
         return {
             "total_memories": total,
             "by_category": categories,
-            "avg_importance": round(total_importance / total, 2) if total > 0 else 0,
+            "avg_importance": avg_imp,
             "disk_usage_bytes": disk_usage,
             "disk_usage_mb": round(disk_usage / (1024 * 1024), 2),
             "free_space_mb": round(free_space / (1024 * 1024), 2),
         }
 
     def should_save(self, text: str) -> bool:
-        """Decide se uma informação deve ser salva como memória.
-
-        Args:
-            text: Texto para analisar.
-
-        Returns:
-            True se deve ser salvo.
-        """
+        """Decide se uma informação deve ser salva como memória."""
         text_lower = text.lower().strip()
 
-        # Não salvar saudações e agradecimentos
         skip_patterns = [
             "bom dia", "boa tarde", "boa noite",
             "obrigado", "obrigada", "valeu",
@@ -333,11 +352,9 @@ class MemoryManager:
             if text_lower == pattern:
                 return False
 
-        # Não salvar frases muito curtas
         if len(text.split()) < 4:
             return False
 
-        # Salvar se contiver informações relevantes
         save_keywords = [
             "projeto", "sistema", "configuração", "preferência",
             "dispositivo", "automação", "rota", "diretório",
@@ -351,7 +368,6 @@ class MemoryManager:
             if keyword in text_lower:
                 return True
 
-        # Salvar se for uma frase substantiva
         if len(text.split()) >= 6:
             return True
 

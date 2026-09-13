@@ -76,7 +76,7 @@ class AttentionBridge:
         self._seen += 1
         user_intent = self._state.current_goal if self._state else None
         scored, level = self._attention.classify(event, user_intent)
-        self._attention.note(scored)
+        self._attention.observe(scored)
 
         if self._state is not None:
             self._state.update_perception(

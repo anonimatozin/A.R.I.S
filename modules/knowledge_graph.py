@@ -1,14 +1,17 @@
 """Knowledge Graph - Memória Avançada do A.R.I.S.
 
 Sistema de grafos de conhecimento: entidades, fatos, relacionamentos.
-Inspirado em isair/aris e vierisid/aris.
+Backend: SQLite via MemoryDB (substitui knowledge_graph.json).
 """
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from core.memory_db import MemoryDB
 
 
 @dataclass
@@ -46,64 +49,196 @@ class Fact:
 
 
 class KnowledgeGraph:
-    """Grafo de conhecimento persistente."""
+    """Grafo de conhecimento persistente (SQLite via MemoryDB)."""
 
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, db: MemoryDB | None = None):
         self._data_dir = data_dir
+        self._db = db or MemoryDB()
+        self._counter = 0
+
+        # Cache em memória para performance (índices)
         self._entities: dict[str, Entity] = {}
         self._relations: dict[str, Relation] = {}
         self._facts: dict[str, Fact] = {}
-        self._entity_index: dict[str, list[str]] = {}  # nome -> ids
+        self._entity_index: dict[str, list[str]] = {}  # nome_lower -> [ids]
+
+        self._load_from_db()
+        self._migrate_from_json_if_needed()
+
+    # ── Migração JSON → SQLite ─────────────────────────────────
+
+    def _migrate_from_json_if_needed(self) -> None:
+        """Importa knowledge_graph.json antigo para SQLite (uma única vez)."""
+        graph_file = self._data_dir / "knowledge_graph.json"
+        if not graph_file.exists():
+            return
+
+        try:
+            data = json.loads(graph_file.read_text(encoding="utf-8"))
+            count_e = 0
+            count_r = 0
+            count_f = 0
+
+            for e in data.get("entities", []):
+                entity = Entity(**e)
+                self._db.insert_entity(self._entity_to_row(entity))
+                count_e += 1
+
+            for r in data.get("relations", []):
+                relation = Relation(**r)
+                self._db.insert_relation(self._relation_to_row(relation))
+                count_r += 1
+
+            for f in data.get("facts", []):
+                fact = Fact(**f)
+                self._db.insert_fact(self._fact_to_row(fact))
+                count_f += 1
+
+            self._load_from_db()  # Reload after migration
+
+            # Mover JSON antigo para backup
+            backup_dir = self._data_dir / "_migrated_backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / "knowledge_graph.json"
+            if backup_path.exists():
+                ts = datetime.now().strftime("%Y%m%d%H%M%S")
+                backup_path = backup_dir / f"knowledge_graph.{ts}.json"
+            import shutil
+            shutil.move(str(graph_file), str(backup_path))
+
+            print(f"Migração KG JSON→SQLite: {count_e} entidades, {count_r} relações, {count_f} fatos.")
+        except Exception as e:
+            print(f"Erro na migração KG JSON→SQLite: {e}")
+
+    # ── Conversão Dataclass ↔ Row ──────────────────────────────
+
+    @staticmethod
+    def _entity_to_row(entity: Entity) -> dict[str, Any]:
+        return {
+            "id": entity.id,
+            "name": entity.name,
+            "entity_type": entity.entity_type,
+            "properties": json.dumps(entity.properties, ensure_ascii=False),
+            "confidence": 1.0,
+            "source": "knowledge_graph",
+            "created_at": entity.created_at,
+        }
+
+    @staticmethod
+    def _row_to_entity(row: dict) -> Entity:
+        props_raw = row.get("properties", "{}")
+        try:
+            props = json.loads(props_raw) if isinstance(props_raw, str) else props_raw
+        except Exception:
+            props = {}
+        return Entity(
+            id=row["id"],
+            name=row["name"],
+            entity_type=row["entity_type"],
+            properties=props,
+            created_at=row.get("created_at", datetime.now().isoformat()),
+        )
+
+    @staticmethod
+    def _relation_to_row(relation: Relation) -> dict[str, Any]:
+        return {
+            "id": relation.id,
+            "source_id": relation.source_id,
+            "target_id": relation.target_id,
+            "relation_type": relation.relation_type,
+            "properties": json.dumps(relation.properties, ensure_ascii=False),
+            "weight": relation.weight,
+            "confidence": 1.0,
+            "source": "knowledge_graph",
+            "created_at": relation.created_at,
+        }
+
+    @staticmethod
+    def _row_to_relation(row: dict) -> Relation:
+        props_raw = row.get("properties", "{}")
+        try:
+            props = json.loads(props_raw) if isinstance(props_raw, str) else props_raw
+        except Exception:
+            props = {}
+        return Relation(
+            id=row["id"],
+            source_id=row["source_id"],
+            target_id=row["target_id"],
+            relation_type=row["relation_type"],
+            properties=props,
+            weight=row.get("weight", 1.0),
+            created_at=row.get("created_at", datetime.now().isoformat()),
+        )
+
+    @staticmethod
+    def _fact_to_row(fact: Fact) -> dict[str, Any]:
+        return {
+            "id": fact.id,
+            "entity_id": fact.entity_id,
+            "content": fact.content,
+            "source": fact.source,
+            "confidence": fact.confidence,
+            "created_at": fact.created_at,
+        }
+
+    @staticmethod
+    def _row_to_fact(row: dict) -> Fact:
+        return Fact(
+            id=row["id"],
+            entity_id=row["entity_id"],
+            content=row["content"],
+            source=row.get("source", "conversation"),
+            confidence=row.get("confidence", 1.0),
+            created_at=row.get("created_at", datetime.now().isoformat()),
+        )
+
+    # ── Carregamento do DB para cache ──────────────────────────
+
+    def _load_from_db(self) -> None:
+        """Carrega dados do SQLite para cache em memória."""
+        self._entities.clear()
+        self._relations.clear()
+        self._facts.clear()
+        self._entity_index.clear()
         self._counter = 0
 
-        self._load()
-
-    def _load(self) -> None:
-        """Carrega o grafo do disco."""
-        graph_file = self._data_dir / "knowledge_graph.json"
-        if graph_file.exists():
-            try:
-                data = json.loads(graph_file.read_text(encoding="utf-8"))
-                for e in data.get("entities", []):
-                    entity = Entity(**e)
-                    self._entities[entity.id] = entity
-                for r in data.get("relations", []):
-                    relation = Relation(**r)
-                    self._relations[relation.id] = relation
-                for f in data.get("facts", []):
-                    fact = Fact(**f)
-                    self._facts[fact.id] = fact
-                self._counter = data.get("counter", 0)
-                self._rebuild_index()
-            except Exception:
-                pass
-
-    def _save(self) -> None:
-        """Salva o grafo no disco."""
-        graph_file = self._data_dir / "knowledge_graph.json"
-        data = {
-            "entities": [asdict(e) for e in self._entities.values()],
-            "relations": [asdict(r) for r in self._relations.values()],
-            "facts": [asdict(f) for f in self._facts.values()],
-            "counter": self._counter,
-        }
-        graph_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    def _rebuild_index(self) -> None:
-        """Reconstrói o índice de nomes."""
-        self._entity_index.clear()
-        for eid, entity in self._entities.items():
+        for row in self._db.search_entities(limit=10000):
+            entity = self._row_to_entity(row)
+            self._entities[entity.id] = entity
             name_lower = entity.name.lower()
             if name_lower not in self._entity_index:
                 self._entity_index[name_lower] = []
-            self._entity_index[name_lower].append(eid)
+            self._entity_index[name_lower].append(entity.id)
+            # Counter para IDs
+            try:
+                num = int(entity.id.split("_")[-1])
+                self._counter = max(self._counter, num)
+            except (ValueError, IndexError):
+                pass
+
+        for row in self._db.search_relations(limit=10000):
+            relation = self._row_to_relation(row)
+            self._relations[relation.id] = relation
+            try:
+                num = int(relation.id.split("_")[-1])
+                self._counter = max(self._counter, num)
+            except (ValueError, IndexError):
+                pass
+
+        for row in self._db.search_facts(limit=10000):
+            fact = self._row_to_fact(row)
+            self._facts[fact.id] = fact
+            try:
+                num = int(fact.id.split("_")[-1])
+                self._counter = max(self._counter, num)
+            except (ValueError, IndexError):
+                pass
 
     def _next_id(self, prefix: str) -> str:
-        """Gera o próximo ID."""
         self._counter += 1
         return f"{prefix}_{self._counter}"
 
-    # ── Entidades ──────────────────────────────────────────
+    # ── Entidades ──────────────────────────────────────────────
 
     def add_entity(
         self,
@@ -112,7 +247,6 @@ class KnowledgeGraph:
         properties: dict | None = None,
     ) -> Entity:
         """Adiciona uma entidade ao grafo."""
-        # Verificar se já existe
         name_lower = name.lower()
         if name_lower in self._entity_index:
             eid = self._entity_index[name_lower][0]
@@ -120,7 +254,7 @@ class KnowledgeGraph:
             entity.last_accessed = datetime.now().isoformat()
             if properties:
                 entity.properties.update(properties)
-            self._save()
+            self._db.insert_entity(self._entity_to_row(entity))
             return entity
 
         entity = Entity(
@@ -133,7 +267,7 @@ class KnowledgeGraph:
         if name_lower not in self._entity_index:
             self._entity_index[name_lower] = []
         self._entity_index[name_lower].append(entity.id)
-        self._save()
+        self._db.insert_entity(self._entity_to_row(entity))
         return entity
 
     def get_entity(self, name: str) -> Entity | None:
@@ -141,9 +275,7 @@ class KnowledgeGraph:
         name_lower = name.lower()
         ids = self._entity_index.get(name_lower, [])
         if ids:
-            entity = self._entities[ids[0]]
-            entity.last_accessed = datetime.now().isoformat()
-            return entity
+            return self._entities.get(ids[0])
         return None
 
     def search_entities(self, query: str, limit: int = 10) -> list[Entity]:
@@ -162,7 +294,7 @@ class KnowledgeGraph:
         """Retorna entidades de um tipo específico."""
         return [e for e in self._entities.values() if e.entity_type == entity_type]
 
-    # ── Relacionamentos ────────────────────────────────────
+    # ── Relacionamentos ────────────────────────────────────────
 
     def add_relation(
         self,
@@ -186,7 +318,7 @@ class KnowledgeGraph:
             properties=properties or {},
         )
         self._relations[relation.id] = relation
-        self._save()
+        self._db.insert_relation(self._relation_to_row(relation))
         return relation
 
     def get_relations_from(self, entity_name: str) -> list[dict]:
@@ -233,7 +365,7 @@ class KnowledgeGraph:
         incoming = self.get_relations_to(entity_name)
         return outgoing + incoming
 
-    # ── Fatos ──────────────────────────────────────────────
+    # ── Fatos ──────────────────────────────────────────────────
 
     def add_fact(
         self,
@@ -245,7 +377,6 @@ class KnowledgeGraph:
         """Adiciona um fato sobre uma entidade."""
         entity = self.get_entity(entity_name)
         if not entity:
-            # Criar entidade automaticamente
             entity = self.add_entity(entity_name, "conceito")
 
         fact = Fact(
@@ -256,7 +387,7 @@ class KnowledgeGraph:
             confidence=confidence,
         )
         self._facts[fact.id] = fact
-        self._save()
+        self._db.insert_fact(self._fact_to_row(fact))
         return fact
 
     def get_facts(self, entity_name: str) -> list[Fact]:
@@ -266,16 +397,12 @@ class KnowledgeGraph:
             return []
         return [f for f in self._facts.values() if f.entity_id == entity.id]
 
-    # ── Extração automática ────────────────────────────────
+    # ── Extração automática ────────────────────────────────────
 
     def extract_from_text(self, text: str) -> dict:
-        """Extrai entidades e relacionamentos de um texto.
-
-        Usa heurísticas simples para extrair informações.
-        """
+        """Extrai entidades e relacionamentos de um texto."""
         extracted = {"entities": [], "relations": [], "facts": []}
 
-        # Padrões para entidades
         entity_patterns = [
             (r"meu nome é (\w+)", "pessoa", "perfil"),
             (r"me chamo (\w+)", "pessoa", "perfil"),
@@ -294,7 +421,6 @@ class KnowledgeGraph:
                     self.add_entity(name, entity_type, {"tag": tag})
                     extracted["entities"].append({"name": name, "type": entity_type})
 
-        # Padrões para relacionamentos
         rel_patterns = [
             (r"(\w+) trabalha com (\w+)", "trabalha_com"),
             (r"(\w+) gosta de (\w+)", "gosta_de"),
@@ -320,7 +446,7 @@ class KnowledgeGraph:
 
         return extracted
 
-    # ── Visualização ───────────────────────────────────────
+    # ── Estatísticas ───────────────────────────────────────────
 
     def get_stats(self) -> dict:
         """Retorna estatísticas do grafo."""
@@ -367,7 +493,6 @@ class KnowledgeGraph:
             f"   Fatos: {stats['facts']}",
         ]
 
-        # Top entidades por tipo
         type_counts = {}
         for entity in self._entities.values():
             type_counts[entity.entity_type] = type_counts.get(entity.entity_type, 0) + 1

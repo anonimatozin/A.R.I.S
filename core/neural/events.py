@@ -43,6 +43,12 @@ EVENT_VISION_ERROR_DETECTED = "vision.error_detected"
 EVENT_VISION_APPLICATION_DETECTED = "vision.application_detected"
 EVENT_VISION_OBJECT_DETECTED = "vision.object_detected"
 
+# Tipos de evento do sistema de memória (MemoryManager / KnowledgeGraph)
+EVENT_MEMORY_CREATED = "memory.created"
+EVENT_MEMORY_RETRIEVED = "memory.retrieved"
+EVENT_MEMORY_UPDATED = "memory.updated"
+EVENT_MEMORY_DELETED = "memory.deleted"
+
 # Prioridades semânticas (0 = baixa, 100 = altíssima)
 PRIORITY_LOW = 0
 PRIORITY_NORMAL = 50
@@ -64,6 +70,14 @@ PERCEPTION_EVENT_TYPES = frozenset({
     EVENT_VISION_ERROR_DETECTED,
     EVENT_VISION_APPLICATION_DETECTED,
     EVENT_VISION_OBJECT_DETECTED,
+})
+
+# Eventos produzidos pelo sistema de memória.
+MEMORY_EVENT_TYPES = frozenset({
+    EVENT_MEMORY_CREATED,
+    EVENT_MEMORY_RETRIEVED,
+    EVENT_MEMORY_UPDATED,
+    EVENT_MEMORY_DELETED,
 })
 
 

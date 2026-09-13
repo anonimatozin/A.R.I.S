@@ -631,3 +631,127 @@ class TestVisionAttentionBridgeIntegration:
             confidence=0.5,
         ))
         assert memory.episodic.total() == 0
+
+
+# ── Handler analyze — resumo via LLM ─────────────────────────
+
+class TestHandleVisionAnalyze:
+    """Testa a ação analyze do handle_vision (resumo via LLM, fallback)."""
+
+    def _make_vision_result(self, *, ocr_text="", ocr_lines=None, vlm_desc=None,
+                            app="VSCode", errors=None):
+        return VisionResult(
+            ocr=OcrResult(
+                available=bool(ocr_text),
+                text=ocr_text,
+                lines=ocr_lines or ocr_text.splitlines(),
+                confidence=0.85,
+            ),
+            vision=VisionAnalysis(
+                available=vlm_desc is not None,
+                description=vlm_desc,
+            ),
+            active_application=app,
+            errors_detected=errors or [],
+            confidence=0.85,
+        )
+
+    def _make_vision_stub(self, result):
+        class _VisionStub:
+            def __init__(self, r):
+                self._r = r
+            def analyze_screen(self, question=None):
+                return self._r
+            def summarize_for_speech(self, r):
+                return "resumo stub"
+            def format_status(self):
+                return "ok"
+            def camera_status(self):
+                return "off"
+            def read_screen(self):
+                return self._r.ocr
+            def detect_errors(self):
+                return self._r.errors_detected
+            def find_on_screen(self, q):
+                return {"found": False, "query": q, "reason": "stub"}
+            def ask(self, q):
+                return None
+        return _VisionStub(result)
+
+    def _make_multi_chat(self, response="Resumo gerado pela IA."):
+        class _MultiChat:
+            def __init__(self, resp):
+                self._resp = resp
+                self.available = True
+            def send(self, prompt, temperature=0.7, max_tokens=2048):
+                return self._resp
+        return _MultiChat(response)
+
+    def _make_multi_chat_unavailable(self):
+        class _MultiChat:
+            available = False
+            def send(self, prompt, **kw):
+                return "Nenhum provedor configurado."
+        return _MultiChat()
+
+    def test_analyze_with_vlm_uses_description(self, capfd):
+        from core.handlers import handle_vision
+        result = self._make_vision_result(vlm_desc="Terminal com erros de compilação.")
+        vision = self._make_vision_stub(result)
+        multi = self._make_multi_chat()
+        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        assert "Terminal com erros" in output
+        captured = capfd.readouterr().out
+        assert "erro" not in captured.lower() or "compilação" in captured
+
+    def test_analyze_without_vlm_uses_llm_for_ocr_summary(self, capfd):
+        from core.handlers import handle_vision
+        result = self._make_vision_result(
+            ocr_text="Error: module 'pyautogui' has no attribute 'screenshot'\n"
+                     "File \"main.py\", line 42\n"
+                     "  img = pyautogui.screenshot()")
+        vision = self._make_vision_stub(result)
+        multi = self._make_multi_chat("Há um erro de importação no código Python.")
+        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        assert "Há um erro de importação" in output
+        captured = capfd.readouterr().out
+        # Texto bruto OCR não deve vazar no output
+        assert "pyautogui.screenshot" not in captured
+        assert "File \"main.py\"" not in captured
+
+    def test_analyze_llm_fallback_when_unavailable(self, capfd):
+        from core.handlers import handle_vision
+        result = self._make_vision_result(
+            ocr_text="Error: module 'pyautogui' has no attribute 'screenshot'")
+        vision = self._make_vision_stub(result)
+        multi = self._make_multi_chat_unavailable()
+        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        assert "Detectei texto na tela" in output
+        assert "não consegui gerar um resumo" in output
+        captured = capfd.readouterr().out
+        assert "pyautogui" not in captured
+
+    def test_analyze_llm_exception_fallback(self, capfd):
+        from core.handlers import handle_vision
+        result = self._make_vision_result(
+            ocr_text="Erro fatal no sistema operacional.")
+        vision = self._make_vision_stub(result)
+
+        class _BadMultiChat:
+            available = True
+            def send(self, prompt, **kw):
+                raise ConnectionError("timeout")
+        multi = _BadMultiChat()
+
+        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        assert "Detectei texto na tela" in output
+        captured = capfd.readouterr().out
+        assert "Erro fatal" not in captured
+
+    def test_analyze_no_ocr_no_vlm_shows_generic(self, capfd):
+        from core.handlers import handle_vision
+        result = self._make_vision_result(ocr_text="", vlm_desc=None)
+        vision = self._make_vision_stub(result)
+        multi = self._make_multi_chat()
+        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        assert "Sem texto detectável" in output

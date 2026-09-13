@@ -37,6 +37,7 @@ from core.neural.planning.planner import Planner
 from core.neural.reasoning.reasoning_router import ReasoningRouter
 from core.neural.security.security_gate import GateOutcome, SecurityGate
 from core.neural.state import GlobalState
+from core.neural.workspace import CognitiveWorkspace, WorkspaceSnapshot
 from utils.logger import Logger as ArisLogger
 
 
@@ -58,6 +59,7 @@ class NeuralCore:
         feedback: FeedbackEngine,
         learning: ExperienceStore,
         planner: Planner,
+        workspace: CognitiveWorkspace | None = None,
         logger: ArisLogger | None = None,
     ) -> None:
         self.event_bus = event_bus
@@ -73,6 +75,7 @@ class NeuralCore:
         self.feedback = feedback
         self.learning = learning
         self.planner = planner
+        self.workspace = workspace
         self._logger = logger
         self._ctx_provider = None
 
@@ -112,6 +115,12 @@ class NeuralCore:
         feedback = FeedbackEngine(working, memory, state, logger=logger)
         learning = ExperienceStore(logger=logger)
         planner = Planner(command_registry=command_registry, logger=logger)
+        workspace = CognitiveWorkspace(
+            state=state,
+            working=working,
+            attention=attention,
+            logger=logger,
+        )
 
         return cls(
             event_bus=bus,
@@ -127,6 +136,7 @@ class NeuralCore:
             feedback=feedback,
             learning=learning,
             planner=planner,
+            workspace=workspace,
             logger=logger,
         )
 
@@ -145,6 +155,7 @@ class NeuralCore:
         container.set("neural.feedback", self.feedback)
         container.set("neural.learning", self.learning)
         container.set("neural.planner", self.planner)
+        container.set("neural.workspace", self.workspace)
 
     # ── Ciclo de processamento ───────────────────────────────
 
@@ -274,6 +285,12 @@ class NeuralCore:
         """Contexto atual (para diagnóstico/logs)."""
         return self.context.build(events=self.state.recent_events(5))
 
+    def build_workspace(self, events: list[Event] | None = None) -> WorkspaceSnapshot:
+        """Constrói um snapshot do workspace cognitivo sob demanda."""
+        if self.workspace is None:
+            return WorkspaceSnapshot()
+        return self.workspace.build(events=events)
+
     def get_stats(self) -> dict[str, Any]:
         """Visão geral do estado do Neural Core."""
         return {
@@ -288,4 +305,5 @@ class NeuralCore:
             "memory": self.memory.snapshot(),
             "context": self.context.get_stats(),
             "reasoning": self.reasoning.get_stats(),
+            "workspace": self.build_workspace().to_dict(),
         }

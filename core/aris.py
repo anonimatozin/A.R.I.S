@@ -169,6 +169,9 @@ class Aris:
         self._neural.register_services(self._container)
         self._neural.set_handler_context(self._build_handler_context)
 
+        # Conectar event bus ao MemoryManager para eventos memory.*
+        self._memory.set_event_bus(self._neural.event_bus)
+
         # Camada de percepção: sensores + atenção integrados ao Neural Core.
         self._perception = None
         try:
@@ -293,6 +296,7 @@ class Aris:
             "state": self._neural.state,
             "perception": self._perception,
             "vision": self._vision,
+            "multi_chat": self._multi_chat,
         }
 
         # Dados pré-computados para handlers que precisam

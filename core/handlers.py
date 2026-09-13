@@ -423,17 +423,46 @@ def handle_vision(action: str, params: dict, **ctx) -> str:
             return "Sistema de visão não disponível no momento."
         question = params.get("question", "") or params.get("query", "") or None
         result = vision.analyze_screen(question=question)
-        if result.vision.available and result.vision.description:
-            print(f"  Descrição visual: {result.vision.description[:300]}")
-        if result.ocr.available and result.ocr.text:
-            print("  Texto na tela:")
-            for ln in result.ocr.lines[:10]:
-                print(f"    • {ln.strip()[:90]}")
+
         print(f"  Janela ativa: {result.active_application or 'desconhecida'}")
-        summary = vision.summarize_for_speech(result)
+
+        # Se VLM forneceu descrição, usar direto
+        if result.vision.available and result.vision.description:
+            summary = result.vision.description[:300]
+            print(f"  {summary}")
+        # Se há texto OCR mas sem VLM, gerar resumo via LLM
+        elif result.ocr.available and result.ocr.text:
+            multi_chat = ctx.get("multi_chat")
+            if multi_chat and multi_chat.available:
+                ocr_text = result.ocr.text[:2000]
+                window = result.active_application or "desconhecida"
+                prompt = (
+                    "Aqui está o texto extraído de uma captura de tela. "
+                    f"Janela ativa: {window}.\n\n"
+                    f"Texto OCR:\n{ocr_text}\n\n"
+                    "Descreva em 1-2 frases naturais o que parece estar acontecendo "
+                    "na tela, sem listar cada item. Seja conciso e útil."
+                )
+                try:
+                    response = multi_chat.send(prompt, temperature=0.3, max_tokens=200)
+                    if response and not response.startswith("Nenhum provedor") and not response.startswith("Todos os provedores"):
+                        summary = response[:300]
+                    else:
+                        summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
+                except Exception:
+                    summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
+            else:
+                summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
+            print(f"  {summary}")
+        else:
+            summary = "Sem texto detectável e sem modelo de visão ativo no momento."
+            print(f"  {summary}")
+
         if result.errors_detected:
             for term in result.errors_detected:
                 print(f"  ⚠ possível erro: {term}")
+            summary += f" Possíveis erros detectados: {', '.join(result.errors_detected)}."
+
         return summary
 
     elif action == "ask":

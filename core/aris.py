@@ -232,6 +232,7 @@ class Aris:
                 self._logger.warning(f"Memória cognitiva indisponível: {e}")
 
         self._interpreter._memory_service = self._memory_service
+        self._interpreter._context_engine = self._neural.context
 
         # Vision Engine (visão computacional: tela → OCR → VLM → eventos/memória).
         self._vision = None

@@ -44,11 +44,12 @@ class AdvancedInterpreter:
     Usa IA para interpretação profunda com contexto.
     """
 
-    def __init__(self, memory_service=None):
+    def __init__(self, memory_service=None, context_engine=None):
         self._modules: dict[str, dict] = {}
         self._context = ConversationContext()
         self._context_history: deque = deque(maxlen=20)
         self._memory_service = memory_service
+        self._context_engine = context_engine
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -339,7 +340,11 @@ Se não houver comando, gere só a resposta natural (sem JSON).
 - Se for comando, responda curto e execute."""
 
     def _get_context_string(self, user_message: str = "") -> str:
-        """Gera string de contexto com memórias de longo prazo."""
+        """Gera string de contexto com memórias de longo prazo.
+
+        Usa ContextEngine.build() quando disponível (única fonte de
+        memória), senão cai no memory_service direto.
+        """
         recent = list(self._context_history)[-3:]
 
         parts = []
@@ -359,17 +364,26 @@ Se não houver comando, gere só a resposta natural (sem JSON).
                 if h.get("response"):
                     parts.append(f"    A.R.I.S.: \"{h['response'][:150]}\"")
 
-        if self._memory_service and user_message:
+        # Memórias de longo prazo — única fonte via ContextEngine
+        memories = []
+        if self._context_engine and user_message:
+            try:
+                bundle = self._context_engine.build(user_input=user_message)
+                memories = bundle.long_term_memories
+            except Exception:
+                memories = []
+        elif self._memory_service and user_message:
             try:
                 memories = self._memory_service.retrieve(user_message, limit=5)
-                if memories:
-                    parts.append("\nMemórias relevantes:")
-                    for m in memories[:5]:
-                        title = m.get("title", "")
-                        content = str(m.get("content", ""))[:160]
-                        parts.append(f"  - {title}: {content}")
             except Exception:
-                pass
+                memories = []
+
+        if memories:
+            parts.append("\nMemórias relevantes:")
+            for m in memories[:5]:
+                title = m.get("title", "")
+                content = str(m.get("content", ""))[:160]
+                parts.append(f"  - {title}: {content}")
 
         if not parts:
             return "Nenhum contexto anterior ainda (primeira interação)."

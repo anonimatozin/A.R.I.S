@@ -207,6 +207,19 @@ class NeuralCore:
         # 4. Roteamento de raciocínio
         routing = self.reasoning.route(query, event)
         if routing.needs_llm:
+            # 4b. Tentar Planner antes de cair no LLM
+            if self.planner.can_plan(query):
+                plan = self.planner.build(query)
+                if plan.steps:
+                    first = plan.next_step()
+                    if first:
+                        decision = self.decision.decide(
+                            first.to_intent(),
+                            goal=self.state.current_goal,
+                            context=self.context.build(query, events=self.state.recent_events(5)),
+                            source="planner",
+                        )
+                        return self.execute(decision)
             return None  # o Aris seguirá com o fluxo LLM atual
 
         # 5. Decisão

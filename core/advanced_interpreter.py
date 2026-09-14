@@ -364,12 +364,23 @@ Se não houver comando, gere só a resposta natural (sem JSON).
                 if h.get("response"):
                     parts.append(f"    A.R.I.S.: \"{h['response'][:150]}\"")
 
-        # Memórias de longo prazo — única fonte via ContextEngine
+        # Memórias de longo prazo + estado NeuralCore via ContextEngine
         memories = []
+        neural_state_parts = []
         if self._context_engine and user_message:
             try:
                 bundle = self._context_engine.build(user_input=user_message)
                 memories = bundle.long_term_memories
+                if bundle.current_goal:
+                    neural_state_parts.append(f"Objetivo NeuralCore: {bundle.current_goal}")
+                if bundle.current_mode:
+                    neural_state_parts.append(f"Modo: {bundle.current_mode}")
+                if bundle.current_task and bundle.current_task.get("intent"):
+                    neural_state_parts.append(f"Intenção em curso: {bundle.current_task['intent']}")
+                if bundle.notes:
+                    notes_str = ", ".join(f"{k}={v}" for k, v in bundle.notes.items() if v)
+                    if notes_str:
+                        neural_state_parts.append(f"Notas: {notes_str}")
             except Exception:
                 memories = []
         elif self._memory_service and user_message:
@@ -377,6 +388,11 @@ Se não houver comando, gere só a resposta natural (sem JSON).
                 memories = self._memory_service.retrieve(user_message, limit=5)
             except Exception:
                 memories = []
+
+        if neural_state_parts:
+            parts.append("\nEstado NeuralCore:")
+            for p in neural_state_parts:
+                parts.append(f"  {p}")
 
         if memories:
             parts.append("\nMemórias relevantes:")

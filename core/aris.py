@@ -6,6 +6,7 @@ comandos e a interface do terminal.
 
 import concurrent.futures
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -85,6 +86,10 @@ class Aris:
             plugins_dir=self._settings.PLUGINS_DIR,
             logger=self._logger,
         )
+
+        # Fila de entrada assíncrona — producers externos podem enfileirar
+        # mensagens via send_message(); o loop principal consome com get_input().
+        self._input_queue: queue.Queue[str] = queue.Queue()
 
         self._voice = Voice(
             rate=self._settings.VOICE_RATE,
@@ -281,6 +286,43 @@ class Aris:
             ("settings", self._settings),
         ):
             self._container.set(name, instance)
+
+    def send_message(self, text: str) -> None:
+        """Enfileira uma mensagem para processamento assíncrono.
+
+        Pode ser chamado de qualquer thread. O loop principal consome
+        a fila via _get_input() a cada iteração.
+        """
+        self._input_queue.put(text)
+
+    def _get_input(self, mic_mode: bool = False) -> str:
+        """Obtém próxima entrada: fila assíncrona primeiro, depois blocking input.
+
+        Retorna string vazia se nada disponível (não-bloqueante na fila).
+        """
+        # 1. Fila assíncrona (não-bloqueante)
+        try:
+            return self._input_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        # 2. Input do usuário (bloqueante)
+        if mic_mode:
+            if self._hybrid_voice._recognizer is None:
+                return ""
+            print("  Escutando...", end="\r")
+            result = self._hybrid_voice.listen(timeout=6) or ""
+            print(" " * 60, end="\r")
+            if result:
+                print(f"  Voce disse: {result}")
+            return result
+        else:
+            return ArisUI.input_modern(
+                version=self._settings.VERSION,
+                provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
+                mem_count=self._memory.get_stats().get("total_memories", 0),
+                task_count=self._scheduler.get_pending_count(),
+            )
 
     def _setup_signal_handlers(self) -> None:
         """Configura handlers para sinais do sistema."""
@@ -522,25 +564,11 @@ class Aris:
 
         while self._running:
             try:
-                # Input: teclado ou microfone (modo voz)
+                # Input: fila assíncrona, teclado ou microfone
                 voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
-                if self._mic_mode:
-                    if self._hybrid_voice._recognizer is None:
-                        self._mic_mode = False
-                    else:
-                        print("  🎙️ Escutando...", end="\r")
-                        user_input = self._hybrid_voice.listen(timeout=6) or ""
-                        print(" " * 60, end="\r")
-                        if user_input:
-                            print(f"  🎙️ Você disse: {user_input}")
-                else:
-                    # Input moderno com status
-                    user_input = ArisUI.input_modern(
-                        version=self._settings.VERSION,
-                        provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
-                        mem_count=self._memory.get_stats().get("total_memories", 0),
-                        task_count=self._scheduler.get_pending_count(),
-                    )
+                if self._mic_mode and self._hybrid_voice._recognizer is None:
+                    self._mic_mode = False
+                user_input = self._get_input(mic_mode=self._mic_mode)
 
                 if not user_input.strip():
                     continue

@@ -16,7 +16,7 @@ from config.esp32_config import ESP32Config
 from config.settings import Settings
 from core.advanced_interpreter import AdvancedInterpreter
 from core.commands import registry
-from core.intent import Intent, IntentAnalyzer
+from core.advanced_interpreter import Intent
 from core.memcore import MemoryKind
 from core.memory import MemoryManager
 from core.memory_models import MemoryCategory
@@ -127,7 +127,7 @@ class Aris:
             "serpapi": os.getenv("SERPAPI_KEY", ""),
         })
 
-        self._intent = IntentAnalyzer()
+        self._intent = None  # deprecated: IntentAnalyzer removido
         self._interpreter = AdvancedInterpreter()
 
         # Novos módulos

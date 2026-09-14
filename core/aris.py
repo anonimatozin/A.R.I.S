@@ -416,7 +416,15 @@ class Aris:
                 self._logger.debug(f"Proactive suggestion skipped: {e}")
 
     def _execute_intent_legacy(self, intent: Intent) -> None:
-        """Fallback legado para módulos que ainda não foram migrados."""
+        """Fallback: route through SecurityGate for unregistered handlers."""
+        decision = self._neural.decision.decide(intent, source="llm_legacy")
+        ctx = self._build_handler_context()
+        result = self._neural.execute(decision, ctx=ctx)
+        if not result.success:
+            if self._logger:
+                self._logger.warning(
+                    f"Legacy intent {intent.module}/{intent.action}: {result.error}"
+                )
 
     def _print_banner(self) -> None:
         """Exibe o banner inicial do sistema."""

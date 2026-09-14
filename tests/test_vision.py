@@ -679,27 +679,28 @@ class TestHandleVisionAnalyze:
         return _VisionStub(result)
 
     def _make_multi_chat(self, response="Resumo gerado pela IA."):
-        class _MultiChat:
+        class _Router:
             def __init__(self, resp):
                 self._resp = resp
                 self.available = True
-            def send(self, prompt, temperature=0.7, max_tokens=2048):
+            def send(self, prompt, temperature=0.7, max_tokens=2048, **kw):
                 return self._resp
-        return _MultiChat(response)
+        return _Router(response)
 
     def _make_multi_chat_unavailable(self):
-        class _MultiChat:
+        class _Router:
             available = False
             def send(self, prompt, **kw):
-                return "Nenhum provedor configurado."
-        return _MultiChat()
+                from core.llm.router import AllProvidersFailedError
+                raise AllProvidersFailedError("Nenhum provider configurado.")
+        return _Router()
 
     def test_analyze_with_vlm_uses_description(self, capfd):
         from core.handlers import handle_vision
         result = self._make_vision_result(vlm_desc="Terminal com erros de compilação.")
         vision = self._make_vision_stub(result)
-        multi = self._make_multi_chat()
-        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        router = self._make_multi_chat()
+        output = handle_vision("analyze", {}, vision=vision, llm_router=router)
         assert "Terminal com erros" in output
         captured = capfd.readouterr().out
         assert "erro" not in captured.lower() or "compilação" in captured
@@ -711,8 +712,8 @@ class TestHandleVisionAnalyze:
                      "File \"main.py\", line 42\n"
                      "  img = pyautogui.screenshot()")
         vision = self._make_vision_stub(result)
-        multi = self._make_multi_chat("Há um erro de importação no código Python.")
-        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        router = self._make_multi_chat("Há um erro de importação no código Python.")
+        output = handle_vision("analyze", {}, vision=vision, llm_router=router)
         assert "Há um erro de importação" in output
         captured = capfd.readouterr().out
         # Texto bruto OCR não deve vazar no output
@@ -724,8 +725,8 @@ class TestHandleVisionAnalyze:
         result = self._make_vision_result(
             ocr_text="Error: module 'pyautogui' has no attribute 'screenshot'")
         vision = self._make_vision_stub(result)
-        multi = self._make_multi_chat_unavailable()
-        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        router = self._make_multi_chat_unavailable()
+        output = handle_vision("analyze", {}, vision=vision, llm_router=router)
         assert "Detectei texto na tela" in output
         assert "não consegui gerar um resumo" in output
         captured = capfd.readouterr().out
@@ -737,13 +738,13 @@ class TestHandleVisionAnalyze:
             ocr_text="Erro fatal no sistema operacional.")
         vision = self._make_vision_stub(result)
 
-        class _BadMultiChat:
+        class _BadRouter:
             available = True
             def send(self, prompt, **kw):
                 raise ConnectionError("timeout")
-        multi = _BadMultiChat()
+        router = _BadRouter()
 
-        output = handle_vision("analyze", {}, vision=vision, multi_chat=multi)
+        output = handle_vision("analyze", {}, vision=vision, llm_router=router)
         assert "Detectei texto na tela" in output
         captured = capfd.readouterr().out
         assert "Erro fatal" not in captured

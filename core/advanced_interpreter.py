@@ -151,6 +151,21 @@ class AdvancedInterpreter:
                 "actions": ["briefing", "bom dia", "resumo"],
                 "params": ["action"],
             },
+            "gmail": {
+                "description": (
+                    "Gmail: ler, listar, buscar e-mails. "
+                    "Ações: list (listar não lidos), read (ler msg específica), search (buscar), "
+                    "mark_read (marcar como lido), mark_unread (marcar como não lido), "
+                    "trash (mover pra lixeira — REQUER message_id, NUNCA use 'all'), "
+                    "untrash (restaurar da lixeira)"
+                ),
+                "actions": [
+                    "list", "read", "search",
+                    "mark_read", "mark_unread",
+                    "trash", "untrash",
+                ],
+                "params": ["action", "query", "message_id", "max_results"],
+            },
             "remember": {
                 "description": "Salvar informação na memória",
                 "actions": ["lembrar", "salvar", "anotar", "memorizar"],
@@ -192,6 +207,16 @@ class AdvancedInterpreter:
             self._context.last_topic = "luzes"
         elif any(w in msg_lower for w in ["discord", "chat", "conversa"]):
             self._context.last_topic = "comunicacao"
+        elif any(w in msg_lower for w in [
+            "atualizar", "evoluir", "melhorar", "capacidade", "funcionalidade",
+            "ideias", "sugestão", "plano", "próximo", "futuro",
+            "o que você faz", "o que voce faz", "quem é", "quem voce",
+        ]):
+            self._context.last_topic = "projeto_evolution"
+        elif any(w in msg_lower for w in ["e-mail", "email", "gmail", "inbox", "mensagem"]):
+            self._context.last_topic = "email"
+        elif any(w in msg_lower for w in ["tela", "visão", "vision", "ocr", "camera"]):
+            self._context.last_topic = "visao"
 
         # Detectar app mencionado
         apps = ["discord", "spotify", "youtube", "navegador", "chrome", "firefox",
@@ -228,11 +253,33 @@ class AdvancedInterpreter:
 
         return result
 
+    @staticmethod
+    def _sanitize_prompt_input(text: str) -> str:
+        """Sanitiza input do usuário para prevenir prompt injection.
+
+        Remove/escapa sequências que podem quebrar o formato do prompt
+        ou injetar instruções adversariais.
+        """
+        # Remover tentativas de fechar/reabrir blocos de formato
+        text = text.replace("```json", "``` json")
+        text = text.replace("```python", "``` python")
+        # Escapar aspas que podem quebrar o delimitador do prompt
+        text = text.replace('"', '\\"')
+        # Remover quebras de linha suspeitas (injeção de seção)
+        text = text.replace("\n## ", "\n##\\ ")
+        # Limitar tamanho para prevenir abuso
+        if len(text) > 2000:
+            text = text[:2000] + "...[truncado]"
+        return text
+
     def build_interpretation_prompt(self, user_message: str) -> str:
         """Constrói o prompt para interpretação avançada."""
         modules_desc = self.get_modules_for_prompt()
         context = self._get_context_string()
         resolved = self.resolve_references(user_message)
+
+        # Sanitizar input do usuário para prevenir prompt injection
+        sanitized = self._sanitize_prompt_input(resolved)
 
         return f"""Você é o cérebro do A.R.I.S., um assistente avançado.
 
@@ -245,7 +292,7 @@ SUA MISSÃO: Interpretar QUALQUER frase do operador e transformar em comandos es
 {modules_desc}
 
 ## MENSAGEM DO OPERADOR
-"{resolved}"
+"{sanitized}"
 
 ## SUA TAREFA
 
@@ -349,7 +396,25 @@ Operador: "Bom dia, como vai?"
 []
 ```
 
+### Exemplo 8: Pergunta sobre capacidades
+Operador: "Me dá ideias do que você pode fazer"
+```json
+[]
+```
+(Responda SUBSTANCIVAMENTE com suas capacidades reais. NUNCA responda "Bom dia" para isso.)
+
+### Exemplo 9: Discussão do projeto
+Operador: "O que você acha que devemos melhorar na ARIS?"
+```json
+[]
+```
+(Responda com opiniões e ideias. Use o contexto da conversa.)
+
 IMPORTANTE:
+- **NUNCA** responda "Bom dia", "Boa tarde", "Como posso ajudar?" para perguntas ou conversa
+- Perguntas → resposta SUBSTANCIVA com conteúdo real
+- Conversa natural → resposta engajada, não saudação
+- Apenas cumprimentos reais ("oi", "bom dia") recebem saudação de volta
 - Seja PRECISO nos parâmetros (nome do app, cidade, etc)
 - NUNCA crie comandos para módulos que não existem
 - Use a confiança para indicar incerteza

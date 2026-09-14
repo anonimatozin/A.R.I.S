@@ -29,6 +29,7 @@ from core.neural.events import Event
 from core.neural.memory.system import MemorySystem
 from core.neural.memory.working_memory import WorkingMemory
 from core.neural.state import GlobalState
+from core.neural.world_model import WorldModel
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,7 @@ class CognitiveWorkspace:
         attention: AttentionEngine,
         knowledge_graph: Any | None = None,
         memory_system: MemorySystem | None = None,
+        world_model: WorldModel | None = None,
         max_events: int = 10,
         max_entities: int = 8,
         logger: Any | None = None,
@@ -140,6 +142,7 @@ class CognitiveWorkspace:
         self._attention = attention
         self._kg = knowledge_graph
         self._memory = memory_system
+        self._world = world_model
         self._max_events = max_events
         self._max_entities = max_entities
         self._logger = logger
@@ -164,6 +167,29 @@ class CognitiveWorkspace:
         task = self._working.snapshot().get("goal", "") or self._state.current_task
         budget = _get_budget()
 
+        # Goals e proposals do WorldModel
+        wm_goals: list[str] = []
+        proposals: list[str] = []
+        if self._world is not None:
+            active_goals = self._world.get_active_goals()
+            if active_goals and not goal:
+                goal = active_goals[0].description
+            wm_goals = [g.description for g in active_goals]
+            overdue = self._world.get_overdue_goals()
+            for g in overdue:
+                proposals.append(
+                    f"Objetivo atrasado: '{g.description}' "
+                    f"(prazo: {g.deadline[:10] if g.deadline else '?'}). "
+                    f"Atualizar ou abandonar?"
+                )
+            due_rems = self._world.get_due_reminders()
+            for r in due_rems:
+                proposals.append(f"Lembrete pendente: '{r.text}'")
+            followups = self._world.check_follow_ups()
+            for fu in followups:
+                if fu not in proposals:
+                    proposals.append(fu)
+
         focus = self._determine_focus(goal, task, recent)
 
         return WorkspaceSnapshot(
@@ -173,7 +199,7 @@ class CognitiveWorkspace:
             current_goal=goal,
             current_task=task,
             hypotheses=[],
-            proposals=[],
+            proposals=proposals,
             budget=budget,
         )
 

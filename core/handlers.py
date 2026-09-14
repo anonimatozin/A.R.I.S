@@ -424,16 +424,13 @@ def handle_vision(action: str, params: dict, **ctx) -> str:
         question = params.get("question", "") or params.get("query", "") or None
         result = vision.analyze_screen(question=question)
 
-        print(f"  Janela ativa: {result.active_application or 'desconhecida'}")
-
         # Se VLM forneceu descrição, usar direto
         if result.vision.available and result.vision.description:
             summary = result.vision.description[:300]
-            print(f"  {summary}")
         # Se há texto OCR mas sem VLM, gerar resumo via LLM
         elif result.ocr.available and result.ocr.text:
-            multi_chat = ctx.get("multi_chat")
-            if multi_chat and multi_chat.available:
+            llm_router = ctx.get("llm_router")
+            if llm_router and llm_router.available:
                 ocr_text = result.ocr.text[:2000]
                 window = result.active_application or "desconhecida"
                 prompt = (
@@ -444,23 +441,16 @@ def handle_vision(action: str, params: dict, **ctx) -> str:
                     "na tela, sem listar cada item. Seja conciso e útil."
                 )
                 try:
-                    response = multi_chat.send(prompt, temperature=0.3, max_tokens=200)
-                    if response and not response.startswith("Nenhum provedor") and not response.startswith("Todos os provedores"):
-                        summary = response[:300]
-                    else:
-                        summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
+                    response = llm_router.send(prompt, temperature=0.3, max_tokens=200)
+                    summary = response[:300]
                 except Exception:
                     summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
             else:
                 summary = "Detectei texto na tela, mas não consegui gerar um resumo agora."
-            print(f"  {summary}")
         else:
             summary = "Sem texto detectável e sem modelo de visão ativo no momento."
-            print(f"  {summary}")
 
         if result.errors_detected:
-            for term in result.errors_detected:
-                print(f"  ⚠ possível erro: {term}")
             summary += f" Possíveis erros detectados: {', '.join(result.errors_detected)}."
 
         return summary
@@ -814,6 +804,357 @@ def handle_perception(action: str, params: dict, **ctx) -> str:
     return _show(perception.describe())
 
 
+# ── Gmail (read-only + safety controls) ────────────────────
+
+# Bloco de memória de sessão para últimas listas (usado por mark_read/trash sem ID)
+_last_gmail_results: list[dict] = []
+
+# Remetentes bloqueados (em memória — persistência futura no User Model)
+_blocked_senders: set[str] = set()
+
+
+def _is_sender_blocked(from_: str) -> bool:
+    """Verifica se o remetente está na lista de bloqueio."""
+    from_lower = from_.lower()
+    return any(b in from_lower for b in _blocked_senders)
+
+
+def _classify_importance(msg) -> int:
+    """Classifica importância de 0-10. Maior = mais importante.
+
+    Heurística:
+    - Remetentes pessoais/ known → +3
+    - Assuntos com urgência real (segurança, financeiro) → +3
+    - Marketing/promoções/newsletters → -3
+    - Notificações em massa → -4
+    """
+    score = 5
+    from_ = (msg.from_ or "").lower()
+    subject = (msg.subject or "").lower()
+
+    # Remetentes pessoais / important
+    trusted = ("gmail.com", "google", "github", "banco", "itau", "bradesco",
+               "nubank", "pessoal", "mamãe", "pai", "esposa", "amigo")
+    if any(t in from_ for t in trusted):
+        score += 3
+
+    # Urgência real
+    urgent = ("urgente", "importante", "segurança", "password", "senha",
+              "conta comprometida", "novo login", "transação", "pix", "fatura")
+    if any(u in subject for u in urgent):
+        score += 3
+
+    # Marketing / promoções
+    spam = ("promo", "desconto", "oferta", "black friday", "cupom",
+            "grátis", "gratis", "clique aqui", "compre agora", "saiba mais")
+    if any(s in subject for s in spam):
+        score -= 3
+
+    # Notificações em massa
+    mass = ("noreply", "no-reply", "notificação", "notification",
+            "newsletter", "digest", "jobsora", "linkedin")
+    if any(m in from_ for m in mass):
+        score -= 4
+
+    # Assuntos genéricos / baixo valor
+    low = ("obrigado", "obrigada", "confirmação", "confirm",
+           "fwd:", "fw:", "re:", "reply")
+    if any(l in subject for l in low):
+        score -= 1
+
+    return max(0, min(10, score))
+
+
+def _format_email_list(messages, max_show: int = 15) -> str:
+    """Formata lista de e-mails de forma compacta e legível."""
+    if not messages:
+        return "Nenhuma mensagem encontrada."
+
+    lines = [f"📧 {len(messages)} mensagem(s) encontrada(s):"]
+    for i, msg in enumerate(messages[:max_show], 1):
+        importance = _classify_importance(msg)
+        indicator = "🔴" if importance >= 8 else "🟡" if importance >= 5 else "⚪"
+        date_str = msg.date.strftime('%d/%m %H:%M') if msg.date else "?"
+        snippet = f" — {msg.snippet[:60]}" if msg.snippet else ""
+        lines.append(f"  {indicator} {i}. [{date_str}] {msg.from_}: {msg.subject}{snippet}")
+        lines.append(f"     ID: {msg.id}")
+
+    if len(messages) > max_show:
+        lines.append(f"  ... e mais {len(messages) - max_show} mensagens")
+
+    return "\n".join(lines)
+
+
+def _synthesize_emails(messages, context: str = "") -> str:
+    """Gera síntese dos e-mails via LLM. Se LLM indisponível, retorna lista formatada."""
+    if not messages:
+        return "Nenhuma mensagem encontrada."
+
+    # Construir contexto compacto para o LLM
+    email_data = []
+    for msg in messages[:20]:
+        importance = _classify_importance(msg)
+        email_data.append({
+            "from": msg.from_,
+            "subject": msg.subject,
+            "snippet": (msg.snippet or "")[:100],
+            "date": msg.date.strftime('%d/%m %H:%M') if msg.date else "?",
+            "importance": importance,
+        })
+
+    emails_text = "\n".join(
+        f"- De: {e['from']} | Assunto: {e['subject']} | "
+        f"Data: {e['date']} | Importância: {e['importance']}/10 | "
+        f"Preview: {e['snippet']}"
+        for e in email_data
+    )
+
+    try:
+        from core.llm.router import LLMRouter
+        router = LLMRouter()
+        if not router.available:
+            return _format_email_list(messages)
+
+        prompt = (
+            "Você é um assistente de e-mail. Analise estas mensagens e gere uma síntese útil.\n"
+            "Destaque: padrões, remetentes recorrentes, alertas de segurança, "
+            "o que é urgente vs. o que pode esperar.\n"
+            "Seja conciso (máx 8 linhas). Termine com: 'ID: <id>' para cada mensagem mencionada.\n\n"
+            f"{context}\n\n"
+            f"Mensagens:\n{emails_text}"
+        )
+        result = router.send(prompt)
+        if result and len(result) > 20:
+            return result
+    except Exception:
+        pass
+
+    return _format_email_list(messages)
+
+
+@registry.register_intent(
+    "gmail",
+    description="Gmail: ler, listar, buscar, marcar, lixeira. Ações: list, read, search, mark_read, mark_unread, trash, untrash, block_sender"
+)
+def handle_gmail(action: str, params: dict, **ctx) -> str:
+    global _last_gmail_results, _blocked_senders
+
+    from core.gmail.service import GmailService
+
+    gmail: GmailService | None = ctx.get("gmail")
+    if gmail is None or not gmail.is_configured:
+        return "Gmail não configurado. Defina ARIS_GMAIL_CLIENT_ID e ARIS_GMAIL_CLIENT_SECRET no .env"
+
+    if not gmail.is_authenticated:
+        if not gmail.load_stored_tokens():
+            import webbrowser
+            auth_url = gmail.get_auth_url()
+            webbrowser.open(auth_url)
+            print(f"  🌐 Browser aberto. Autorize no Google.")
+            print(f"  ⏳ Aguardando callback em http://localhost:{gmail._auth_port}/callback ...")
+            code = gmail.start_callback_server(timeout=120)
+            if code:
+                ok = gmail.exchange_code(code)
+                if ok:
+                    return "Gmail autenticado com sucesso!"
+                return "Falha na autenticação. Código inválido ou expirado."
+            return "Timeout: nenhum código recebido. Tente novamente."
+
+    if action == "callback":
+        code = params.get("code", "")
+        if not code:
+            return "Código de autorização não fornecido."
+        ok = gmail.exchange_code(code)
+        return "Gmail autenticado com sucesso!" if ok else "Falha na autenticação. Tente novamente."
+
+    # ── Listar (com síntese) ─────────────────────────────────
+    if action == "list":
+        query = params.get("query", "is:unread")
+        max_results = min(int(params.get("max_results", 10)), 50)
+        messages = gmail.list_messages(query=query, max_results=max_results)
+        if not messages:
+            return f"Nenhuma mensagem encontrada para: {query}"
+
+        # Filtrar bloqueados
+        messages = [m for m in messages if not _is_sender_blocked(m.from_)]
+        if not messages:
+            return "Nenhuma mensagem (todas de remetentes bloqueados)."
+
+        # Guardar para referência futura
+        _last_gmail_results = [{"id": m.id, "from": m.from_, "subject": m.subject} for m in messages]
+
+        return _synthesize_emails(messages, f"Filtro aplicado: {query}")
+
+    # ── Buscar (com síntese) ─────────────────────────────────
+    if action == "search":
+        query = params.get("query", "")
+        if not query:
+            return "Consulta de busca não fornecida."
+        max_results = min(int(params.get("max_results", 10)), 50)
+        messages = gmail.search(query=query, max_results=max_results)
+        if not messages:
+            return f"Nenhum resultado para: {query}"
+
+        messages = [m for m in messages if not _is_sender_blocked(m.from_)]
+        if not messages:
+            return f"Nenhum resultado para '{query}' (remetentes bloqueados filtrados)."
+
+        _last_gmail_results = [{"id": m.id, "from": m.from_, "subject": m.subject} for m in messages]
+
+        return _synthesize_emails(messages, f"Busca: {query}")
+
+    # ── Ler mensagem ─────────────────────────────────────────
+    if action == "read":
+        msg_id = params.get("message_id", "")
+        if not msg_id:
+            # Tentar usar a última listagem
+            if _last_gmail_results:
+                ids = [f"  {r['id']}: {r['from']} — {r['subject']}" for r in _last_gmail_results[:5]]
+                return (
+                    "Qual mensagem deseja ler? IDs disponíveis:\n"
+                    + "\n".join(ids)
+                    + "\n\nDiga 'leia o ID <numero>' ou mencione o remetente."
+                )
+            return "ID da mensagem não fornecido. Liste ou busque e-mails primeiro."
+        msg = gmail.get_message(msg_id)
+        if msg is None:
+            return f"Mensagem {msg_id} não encontrada."
+        return (
+            f"📧 De: {msg.from_}\n"
+            f"   Para: {msg.to}\n"
+            f"   Assunto: {msg.subject}\n"
+            f"   Data: {msg.date.strftime('%d/%m/%Y %H:%M')}\n"
+            f"\n{msg.body_plain[:2000]}"
+        )
+
+    # ── Marcar como lido ─────────────────────────────────────
+    if action == "mark_read":
+        msg_id = params.get("message_id", "")
+        if not msg_id:
+            if _last_gmail_results:
+                ids = [f"  {r['id']}: {r['from']} — {r['subject']}" for r in _last_gmail_results[:5]]
+                return (
+                    "Qual mensagem marcar como lida? IDs:\n"
+                    + "\n".join(ids)
+                    + "\n\nDiga 'marque como lido o ID <numero>' ou 'marque todas como lidas'."
+                )
+            return "ID da mensagem não fornecido. Liste ou busque e-mails primeiro."
+        ok = gmail.mark_as_read(msg_id)
+        if ok:
+            return f"✅ Mensagem {msg_id} marcada como lida."
+        return "Falha ao marcar como lido."
+
+    # ── Marcar como não lido ──────────────────────────────────
+    if action == "mark_unread":
+        msg_id = params.get("message_id", "")
+        if not msg_id:
+            if _last_gmail_results:
+                ids = [f"  {r['id']}: {r['from']} — {r['subject']}" for r in _last_gmail_results[:5]]
+                return (
+                    "Qual mensagem marcar como não lida? IDs:\n"
+                    + "\n".join(ids)
+                )
+            return "ID da mensagem não fornecido."
+        ok = gmail.mark_as_unread(msg_id)
+        if ok:
+            return f"📩 Mensagem {msg_id} marcada como não lida."
+        return "Falha ao marcar como não lido."
+
+    # ── Lixeira (com confirmação) ─────────────────────────────
+    if action == "trash":
+        msg_id = params.get("message_id", "")
+        bulk = params.get("bulk", False)
+
+        # "Apague todos" ou sem ID
+        if not msg_id:
+            if _last_gmail_results:
+                count = len(_last_gmail_results)
+                samples = [f"  • {r['from']}: {r['subject']}" for r in _last_gmail_results[:5]]
+
+                # Operação em massa com confirmação
+                if bulk:
+                    if not params.get("_confirmed"):
+                        return (
+                            f"⚠️ Confirmação de lixeira em massa:\n"
+                            f"  {count} mensagens serão movidas pra lixeira.\n"
+                            f"  Primeiras:\n" + "\n".join(samples)
+                            + f"\n\nResponda 'sim' para confirmar a exclusão em massa."
+                            + "\nResponda 'não' para cancelar."
+                        )
+                    # Executar em massa
+                    ok_count = 0
+                    fail_count = 0
+                    for r in _last_gmail_results:
+                        try:
+                            ok = gmail.trash_message(r["id"])
+                            if ok:
+                                ok_count += 1
+                            else:
+                                fail_count += 1
+                        except Exception:
+                            fail_count += 1
+                    return (
+                        f"🗑️ Lixeira em massa concluída: {ok_count} movidas"
+                        + (f", {fail_count} falharam" if fail_count else "")
+                    )
+
+                # Sem confirmação de massa → mostrar opções
+                return (
+                    f"Encontrei {count} mensagens na última listagem:\n"
+                    + "\n".join(samples)
+                    + f"\n\nOpções:\n"
+                    f"  • 'apague o ID <numero>' — apagar uma específica\n"
+                    f"  • 'apague todos' — mover TODAS pra lixeira (com confirmação)\n"
+                    f"  • 'apague todos do <remetente>' — filtrar por remetente"
+                )
+            return "ID da mensagem não fornecido. Liste ou busque e-mails primeiro."
+
+        # Confirmação antes de executar (mensagem específica)
+        if not params.get("_confirmed"):
+            msg = gmail.get_message(msg_id)
+            if msg:
+                return (
+                    f"⚠️ Confirmar lixeira:\n"
+                    f"  De: {msg.from_}\n"
+                    f"  Assunto: {msg.subject}\n"
+                    f"  Data: {msg.date.strftime('%d/%m/%Y %H:%M') if msg.date else '?'}\n"
+                    f"\nResponda 'sim' para confirmar."
+                )
+            return "Mensagem não encontrada para confirmação."
+
+        ok = gmail.trash_message(msg_id)
+        if ok:
+            return f"🗑️ Mensagem movida pra lixeira (recuperável por 30 dias)."
+        return "Falha ao mover pra lixeira."
+
+    # ── Restaurar da lixeira ──────────────────────────────────
+    if action == "untrash":
+        msg_id = params.get("message_id", "")
+        if not msg_id:
+            return "ID da mensagem não fornecido. Para restaurar, forneça o ID."
+        ok = gmail.untrash_message(msg_id)
+        if ok:
+            return f"♻️ Mensagem restaurada da lixeira."
+        return "Falha ao restaurar."
+
+    # ── Bloquear remetente ────────────────────────────────────
+    if action == "block_sender":
+        sender = params.get("sender", "")
+        if not sender:
+            return "Remetente não fornecido. Diga 'bloquear <email ou nome>'."
+        _blocked_senders.add(sender.lower())
+        return (
+            f"🚫 Remetente '{sender}' adicionado à lista de bloqueio (esta sessão).\n"
+            f"Nota: isso filtra localmente — o Gmail continua recebendo esses e-mails.\n"
+            f"Para bloquear de verdade, crie um filtro no Gmail."
+        )
+
+    return (
+        f"Ação desconhecida: {action}. "
+        "Use: list, read, search, mark_read, mark_unread, trash, untrash, block_sender"
+    )
+
+
 # ── Safety Level Mapping ────────────────────────────────────
 # 1=SAFE, 2=CAUTION, 3=DANGER, 4=CRITICAL
 
@@ -827,6 +1168,7 @@ _SAFETY_LEVELS = {
     "config": 1,
     "speak": 1,
     "context": 1,
+    "gmail": 1,
     "knowledge": 1,
     "safety": 1,
     "digest": 1,
@@ -847,10 +1189,11 @@ _SAFETY_LEVELS = {
     "agents": 2,
 
     # DANGER (3) — ações destrutivas ou difíceis de reverter
-    # (desktop fechar/kill já tratado internamente)
+    # (trash é tratado internamente com confirmação obrigatória)
 
     # CRITICAL (4) — desligar, formatar, etc.
     "exit": 4,
+    "gmail_trash": 4,  # SEMPRE requer confirmação explícita
 }
 
 for _mod, _level in _SAFETY_LEVELS.items():

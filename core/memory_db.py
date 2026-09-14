@@ -218,8 +218,10 @@ class MemoryDB:
         params: list[Any] = []
 
         if query:
-            conditions.append("(title LIKE ? OR content LIKE ?)")
-            q = f"%{query}%"
+            # Escapar wildcards LIKE para prevenir LIKE injection
+            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            conditions.append("(title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')")
+            q = f"%{escaped}%"
             params.extend([q, q])
         if category:
             conditions.append("category = ?")

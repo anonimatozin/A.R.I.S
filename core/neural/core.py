@@ -38,6 +38,7 @@ from core.neural.reasoning.reasoning_router import ReasoningRouter
 from core.neural.security.security_gate import GateOutcome, SecurityGate
 from core.neural.state import GlobalState
 from core.neural.workspace import CognitiveWorkspace, WorkspaceSnapshot
+from core.neural.world_model import WorldModel
 from utils.logger import Logger as ArisLogger
 
 
@@ -102,6 +103,8 @@ class NeuralCore:
         Usa as instâncias reais de ``CommandRegistry`` e
         ``MemoryManager`` para preservar o comportamento.
         """
+        from core.memory_db import MemoryDB
+
         bus = EventBus(logger=logger)
         state = GlobalState()
         memory = MemorySystem.build(memory_manager, logger=logger)
@@ -115,10 +118,12 @@ class NeuralCore:
         feedback = FeedbackEngine(working, memory, state, logger=logger)
         learning = ExperienceStore(logger=logger)
         planner = Planner(command_registry=command_registry, logger=logger)
+        world_model = WorldModel(db=MemoryDB(), logger=logger)
         workspace = CognitiveWorkspace(
             state=state,
             working=working,
             attention=attention,
+            world_model=world_model,
             logger=logger,
         )
 
@@ -156,6 +161,8 @@ class NeuralCore:
         container.set("neural.learning", self.learning)
         container.set("neural.planner", self.planner)
         container.set("neural.workspace", self.workspace)
+        if self.workspace and self.workspace._world:
+            container.set("neural.world_model", self.workspace._world)
 
     # ── Ciclo de processamento ───────────────────────────────
 
@@ -293,6 +300,15 @@ class NeuralCore:
 
     def get_stats(self) -> dict[str, Any]:
         """Visão geral do estado do Neural Core."""
+        wm_stats: dict[str, Any] = {}
+        if self.workspace and self.workspace._world:
+            wm = self.workspace._world
+            wm_stats = {
+                "active_goals": len(wm.get_active_goals()),
+                "overdue_goals": len(wm.get_overdue_goals()),
+                "due_reminders": len(wm.get_due_reminders()),
+                "profile_keys": len(wm.get_user_profile()),
+            }
         return {
             "state": self.state.snapshot(),
             "attention": self.attention.get_weights(),
@@ -306,4 +322,5 @@ class NeuralCore:
             "context": self.context.get_stats(),
             "reasoning": self.reasoning.get_stats(),
             "workspace": self.build_workspace().to_dict(),
+            "world_model": wm_stats,
         }

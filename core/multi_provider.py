@@ -1,119 +1,44 @@
 """Multi-Provider IA do A.R.I.S.
 
-Suporta múltiplos provedores de IA com fallback automático:
-Groq, Google Gemini, Ollama (local).
+Wrapper sobre LLMRouter que mantém histórico de conversa
+e fornece interface backward-compatible com o código existente.
 """
 
-import os
-
-from openai import OpenAI
-
-from core.rate_limiter import gemini_limiter, groq_limiter, ollama_limiter
+from core.llm.router import AllProvidersFailedError, LLMRouter
 from utils.logger import Logger
 
 
-class AIProvider:
-    """Representa um provedor de IA."""
-
-    def __init__(self, name: str, client: OpenAI, model: str, base_url: str = ""):
-        self.name = name
-        self.client = client
-        self.model = model
-        self.base_url = base_url
-        self.available = True
-
-
 class MultiProviderChat:
-    """Gerenciador de múltiplos provedores de IA com fallback automático.
+    """Gerenciador de conversas com fallback automático via LLMRouter.
 
-    Tenta o provedor primário; se falhar, tenta o próximo na lista.
+    Mantém histórico de conversa e delega chamadas LLM ao router.
     """
 
-    def __init__(self, logger: Logger | None = None):
+    def __init__(self, logger: Logger | None = None, router: LLMRouter | None = None):
         self._logger = logger
-        self._providers: list[AIProvider] = []
-        self._current_index = 0
+        self._router = router or LLMRouter(logger=logger)
         self._history: list[dict[str, str]] = []
         self._system_prompt: str = ""
 
-        self._init_providers()
-
-    def _init_providers(self) -> None:
-        """Inicializa todos os provedores configurados."""
-        # Groq (primário)
-        groq_key = os.getenv("GROQ_API_KEY", "")
-        if groq_key:
-            try:
-                client = OpenAI(api_key=groq_key, base_url="https://api.groq.com/openai/v1")
-                model = os.getenv("ARIS_CHAT_MODEL", "openai/gpt-oss-120b")
-                self._providers.append(AIProvider("groq", client, model))
-                if self._logger:
-                    self._logger.info(f"Provider Groq inicializado: {model}")
-            except Exception as e:
-                if self._logger:
-                    self._logger.warning(f"Falha ao inicializar Groq: {e}")
-
-        # Google Gemini
-        gemini_key = os.getenv("GEMINI_API_KEY", "")
-        if gemini_key:
-            try:
-                client = OpenAI(api_key=gemini_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
-                model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
-                self._providers.append(AIProvider("gemini", client, model))
-                if self._logger:
-                    self._logger.info(f"Provider Gemini inicializado: {model}")
-            except Exception as e:
-                if self._logger:
-                    self._logger.warning(f"Falha ao inicializar Gemini: {e}")
-
-        # Ollama (local)
-        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
-        try:
-            client = OpenAI(api_key="ollama", base_url=ollama_url)
-            # Testar conexão
-            client.models.list()
-            self._providers.append(AIProvider("ollama", client, ollama_model, ollama_url))
-            if self._logger:
-                self._logger.info(f"Provider Ollama inicializado: {ollama_model}")
-        except Exception:
-            if self._logger:
-                self._logger.debug("Ollama não disponível (local offline)")
-
     @property
     def available(self) -> bool:
-        """Verifica se há pelo menos um provedor disponível."""
-        return len(self._providers) > 0
-
-    @property
-    def current_provider(self) -> AIProvider | None:
-        """Retorna o provedor atualmente ativo."""
-        if self._providers:
-            return self._providers[self._current_index % len(self._providers)]
-        return None
+        return self._router.available
 
     @property
     def provider_name(self) -> str:
-        """Nome do provedor atual."""
-        p = self.current_provider
-        return p.name if p else "nenhum"
+        status = self._router.get_status()
+        providers = status.get("providers", [])
+        for p in providers:
+            if p.get("available"):
+                return p["name"]
+        return "nenhum"
 
     def set_system_prompt(self, prompt: str) -> None:
-        """Define o system prompt para todos os provedores."""
         self._system_prompt = prompt
         self._history = [{"role": "system", "content": prompt}]
 
-    _RATE_LIMITERS = {
-        "groq": groq_limiter,
-        "gemini": gemini_limiter,
-        "ollama": ollama_limiter,
-    }
-
     def _trim_history(self, messages: list[dict], max_chars: int = 6000) -> list[dict]:
-        """Mantém o contexto dentro do limite do modelo (evita 413/TPM).
-
-        Preserva o system_prompt e as mensagens mais recentes cabíveis.
-        """
+        """Mantém o contexto dentro do limite do modelo (evita 413/TPM)."""
         system = messages[0] if messages and messages[0].get("role") == "system" else None
         rest = messages[1:] if system else messages
         kept = []
@@ -129,88 +54,29 @@ class MultiProviderChat:
     def send(self, message: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
         """Envia mensagem com fallback automático entre provedores.
 
-        Args:
-            message: Mensagem do usuário.
-            temperature: Temperatura de geração.
-            max_tokens: Máximo de tokens na resposta.
-
         Returns:
-            Resposta do provedor ou mensagem de erro.
+            Resposta do provedor ou mensagem de erro (string).
         """
-        if not self._providers:
-            return "Nenhum provedor de IA configurado. Defina GROQ_API_KEY, GEMINI_API_KEY ou instale Ollama."
-
-        # Provedores podem falhar de forma temporária; reiniciar o ciclo permite retry.
-        for p in self._providers:
-            p.available = True
-
         self._history.append({"role": "user", "content": message})
+        messages = self._trim_history(self._history)
 
-        # Tentar cada provedor em sequência
-        last_error = None
-        for i in range(len(self._providers)):
-            provider_idx = (self._current_index + i) % len(self._providers)
-            provider = self._providers[provider_idx]
-
-            if not provider.available:
-                continue
-
-            # Rate limit check
-            limiter = self._RATE_LIMITERS.get(provider.name)
-            if limiter and not limiter.allow():
-                if self._logger:
-                    self._logger.warning(f"Rate limit atingido para {provider.name} ({limiter.remaining}/{limiter.max_calls})")
-                continue
-
-            try:
-                messages = self._trim_history(self._history)
-                response = provider.client.chat.completions.create(
-                    model=provider.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-                reply = response.choices[0].message.content.strip()
-                self._history.append({"role": "assistant", "content": reply})
-
-                # Se funcionou com provedor diferente, atualizar índice
-                if provider_idx != self._current_index:
-                    self._current_index = provider_idx
-                    if self._logger:
-                        self._logger.info(f"Fallback para provider: {provider.name}")
-
-                if self._logger:
-                    self._logger.debug(f"Chat [{provider.name}]: reply={reply[:80]}...")
-
-                return reply
-
-            except Exception as e:
-                last_error = e
-                provider.available = False
-                if self._logger:
-                    self._logger.warning(f"Provider {provider.name} falhou: {e}")
-                continue
-
-        # Todos falharam
-        if last_error is None:
-            error_msg = "Nenhum provedor respondeu. Verifique as chaves no .env (GROQ_API_KEY, GEMINI_API_KEY)."
-        else:
-            error_msg = f"Todos os provedores falharam. Último erro: {last_error}"
-        if self._logger:
-            self._logger.error(error_msg)
-        return error_msg
+        try:
+            reply = self._router.send(
+                message,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=messages,
+            )
+            self._history.append({"role": "assistant", "content": reply})
+            return reply
+        except AllProvidersFailedError as exc:
+            error_msg = str(exc)
+            if self._logger:
+                self._logger.error(error_msg)
+            return error_msg
 
     def clear_history(self) -> None:
-        """Limpa o histórico mantendo o system prompt."""
         self._history = [{"role": "system", "content": self._system_prompt}]
 
     def get_status(self) -> dict:
-        """Retorna status de todos os provedores."""
-        return {
-            "providers": [
-                {"name": p.name, "model": p.model, "available": p.available}
-                for p in self._providers
-            ],
-            "current": self.provider_name,
-        }
+        return self._router.get_status()

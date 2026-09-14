@@ -164,7 +164,7 @@ class GeminiVision:
         self._base_url = base_url
         self._timeout = timeout
         self._logger = logger
-        self._client = None
+        self._openai_client: Any = None
 
     def _log(self, level: str, message: str) -> None:
         if self._logger is not None:
@@ -174,25 +174,25 @@ class GeminiVision:
     def available(self) -> bool:
         if not self._api_key:
             return False
-        return self._client() is not None
+        return self._get_client() is not None
 
-    def _client(self) -> Any:
-        if self._client is None:
+    def _get_client(self) -> Any:
+        if self._openai_client is None:
             try:
                 from openai import OpenAI
 
-                self._client = OpenAI(
+                self._openai_client = OpenAI(
                     api_key=self._api_key,
                     base_url=self._base_url,
                     timeout=self._timeout,
                 )
             except Exception as exc:
                 self._log("warning", f"Falha ao criar cliente Gemini: {exc}")
-                self._client = False  # type: ignore[assignment]
-        return self._client if self._client is not False else None
+                self._openai_client = False  # type: ignore[assignment]
+        return self._openai_client if self._openai_client is not False else None
 
     def ask(self, image: Image.Image, question: str) -> str | None:
-        client = self._client()
+        client = self._get_client()
         if client is None:
             return None
         if gemini_limiter is not None:

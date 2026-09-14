@@ -21,6 +21,9 @@ from core.memcore import MemoryKind
 from core.memory import MemoryManager
 from core.memory_models import MemoryCategory
 from core.memory_organizer import MemoryOrganizer
+from core.greeting import GreetingService
+from core.gmail import GmailService
+from core.llm import LLMRouter
 from core.module_manager import ModuleManager
 from core.multi_provider import MultiProviderChat
 from core.neural import NeuralCore
@@ -98,13 +101,16 @@ class Aris:
             memory_root=self._settings.MEMORY_ROOT,
         )
 
-        self._multi_chat = MultiProviderChat(logger=self._logger)
+        self._llm_router = LLMRouter(logger=self._logger)
+
+        self._multi_chat = MultiProviderChat(logger=self._logger, router=self._llm_router)
 
         self._chat = Chat(
             api_key=self._settings.GROQ_API_KEY,
             model=self._settings.CHAT_MODEL,
             logger=self._logger,
             memory=self._memory,
+            router=self._llm_router,
         )
 
         self._organizer = MemoryOrganizer(
@@ -136,10 +142,28 @@ class Aris:
         self._awareness = DesktopAwareness(data_dir=self._settings.DATA_DIR)
         self._redaction = AutoRedaction()
         self._digest = MorningDigest(data_dir=self._settings.DATA_DIR)
+        self._greeting = GreetingService(
+            timezone=self._settings.GREETING_TIMEZONE,
+            latitude=self._settings.GREETING_LATITUDE,
+            longitude=self._settings.GREETING_LONGITUDE,
+            city=self._settings.GREETING_CITY,
+            cooldown_hours=self._settings.GREETING_COOLDOWN_HOURS,
+            logger=self._logger,
+        )
         self._browser = BrowserAutomation(data_dir=self._settings.DATA_DIR)
         self._agents = MultiAgentSystem(data_dir=self._settings.DATA_DIR)
         self._skills = SkillsSystem(data_dir=self._settings.DATA_DIR)
         self._dictation = DictationMode()
+
+        # Gmail (read-only)
+        self._gmail = GmailService(
+            client_id=os.getenv("ARIS_GMAIL_CLIENT_ID", ""),
+            client_secret=os.getenv("ARIS_GMAIL_CLIENT_SECRET", ""),
+            safety_manager=self._safety,
+            auth_port=int(os.getenv("ARIS_GMAIL_AUTH_PORT", "8741")),
+        )
+        if self._gmail.is_configured:
+            self._gmail.load_stored_tokens()
 
         # Hardware ESP32
         self._esp32_config = ESP32Config()
@@ -297,6 +321,8 @@ class Aris:
             "perception": self._perception,
             "vision": self._vision,
             "multi_chat": self._multi_chat,
+            "llm_router": self._llm_router,
+            "gmail": self._gmail,
         }
 
         # Dados pré-computados para handlers que precisam
@@ -374,16 +400,15 @@ class Aris:
                                   "Posso sugerir processos para liberar espaço?")
                 elif total >= 3:
                     if self._briefing_offered:
-                        # Não repetir o convite de briefing na mesma sessão.
                         return
                     self._briefing_offered = True
-                    suggestion = (f"Já aprendi {total} informações sobre você. Quer que eu "
-                                  "prepare um briefing com o que sei até agora?")
+                    suggestion = None  # Desativado: não oferecer briefing automaticamente
                 else:
                     suggestion = ("Estou de prontidão. Se quiser, posso agendar lembretes "
                                   "ou montar um briefing do dia.")
-            print(f"  💡 {suggestion}")
-            voice.speak(suggestion)
+            if suggestion:
+                print(f"  💡 {suggestion}")
+                voice.speak(suggestion)
         except Exception:
             pass
 
@@ -469,9 +494,12 @@ class Aris:
             voice.speak("A.R.I.S. inicializado. Todos os sistemas operacionais.")
 
         # Status do provider
-        provider_status = self._multi_chat.get_status()
+        provider_status = self._llm_router.get_status()
         if provider_status["providers"]:
-            active = provider_status["current"]
+            active = next(
+                (p["name"] for p in provider_status["providers"] if p.get("available")),
+                "nenhum",
+            )
             print(f"  Provider ativo: {Terminal.colorize(active, Terminal.CYAN)}")
         print()
 
@@ -497,13 +525,19 @@ class Aris:
                     # Input moderno com status
                     user_input = ArisUI.input_modern(
                         version=self._settings.VERSION,
-                        provider=self._multi_chat.provider_name if self._multi_chat.available else "local",
+                        provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
                         mem_count=self._memory.get_stats().get("total_memories", 0),
                         task_count=self._scheduler.get_pending_count(),
                     )
 
                 if not user_input.strip():
                     continue
+
+                # Saudação contextual na primeira interação da sessão (desativada)
+                # if self._greeting.should_greet():
+                #     greeting_text = self._greeting.compose_greeting()
+                #     print(f"\n  {greeting_text}\n")
+                #     self._greeting.register_greeting()
 
                 # Alimenta o observador de memória (buffer de conversa)
                 if self._memory_service:
@@ -551,6 +585,7 @@ class Aris:
                     self._logger.error(f"NeuralCore: falha no processamento ({e})")
                     neural_result = None
                 if neural_result is not None:
+                    self._cognitive_trace(user_input, "DETERMINISTIC", f"handler={neural_result.output[:40] if neural_result.output else 'error'}")
                     # Registrar no contexto da conversa (mesmo sem LLM)
                     # para que "e depois?", "e então?" retomem o assunto.
                     reply_text = neural_result.output or neural_result.error or ""
@@ -558,9 +593,11 @@ class Aris:
                     if neural_result.output:
                         ArisUI.show_response(neural_result.output)
                         if voice.enabled:
-                            self._sync_hardware_state(SystemState.SPEAKING)
-                            voice.speak(neural_result.output)
-                            self._sync_hardware_state(SystemState.IDLE)
+                            # Não falar texto que contenha URLs (evita ler link letra por letra)
+                            if "http" not in neural_result.output.lower():
+                                self._sync_hardware_state(SystemState.SPEAKING)
+                                voice.speak(neural_result.output)
+                                self._sync_hardware_state(SystemState.IDLE)
                         self._track_aris_question(neural_result.output)
                     elif neural_result.error:
                         ArisUI.show_error(neural_result.error)
@@ -571,6 +608,7 @@ class Aris:
                 # ARIS: aprende a resposta em vez de perder o contexto
                 # (ex.: ARIS pergunta a fruta favorita e usuário diz "abacaxi").
                 if self._looks_like_answer(user_input):
+                    self._cognitive_trace(user_input, "LEARN_ANSWER")
                     try:
                         learned = self._learn_answer(user_input, voice)
                         if learned:
@@ -582,6 +620,7 @@ class Aris:
                 # Enviar tudo para a IA interpretar
                 chat = self._multi_chat if self._multi_chat.available else self._chat
                 if chat.available or (hasattr(chat, 'available') and chat.available):
+                    self._cognitive_trace(user_input, "LLM", f"provider={getattr(chat, '_provider_name', '?')}")
                     # Estado: processando
                     self._sync_hardware_state(SystemState.THINKING)
 
@@ -628,7 +667,7 @@ class Aris:
                     if clean_response:
                         ArisUI.show_response(clean_response)
 
-                    if voice.enabled and speak_text:
+                    if voice.enabled and speak_text and "http" not in speak_text.lower():
                         self._sync_hardware_state(SystemState.SPEAKING)
                         voice.speak(speak_text)
                     self._track_aris_question(speak_text)
@@ -733,7 +772,7 @@ class Aris:
         stats = self._memory.get_stats()
         print(f"  Memórias: {stats.get('total_memories', 0)}")
         print(f"  Tarefas: {self._scheduler.get_pending_count()}")
-        print(f"  Provider: {self._multi_chat.provider_name}")
+        print(f"  Provider: {self._llm_router.provider_names[0] if self._llm_router.provider_names else 'nenhum'}")
         print(f"  Hardware: {'Conectado' if self._hardware.connected else 'Desconectado'}")
 
     def _on_button_reconnect(self) -> None:
@@ -809,7 +848,7 @@ class Aris:
     def _get_dynamic_prompt(self) -> str:
         """Gera o prompt dinâmico com status do sistema."""
         mem_count = self._memory.get_stats().get("total_memories", 0)
-        provider = self._multi_chat.provider_name if self._multi_chat.available else "local"
+        provider = self._llm_router.provider_names[0] if self._llm_router.provider_names else "local"
         scheduler_count = self._scheduler.get_pending_count()
 
         parts = [self._settings.VERSION, provider, f"{mem_count} mem"]
@@ -822,17 +861,66 @@ class Aris:
         """Lembra a última pergunta feita pela ARIS (para respostas do usuário)."""
         self._last_aris_question = text if text and text.strip().endswith("?") else None
 
+    def _cognitive_trace(self, user_input: str, route: str, detail: str = "") -> None:
+        """Registra trace de observabilidade do processamento.
+
+        Formato: TRACE | <input truncado> | <rota> | <detalhe>
+        """
+        short = user_input[:60] + ("..." if len(user_input) > 60 else "")
+        extra = f" | {detail}" if detail else ""
+        self._logger.debug(f"TRACE | {short} | {route}{extra}")
+
     def _looks_like_answer(self, text: str) -> bool:
+        """Verifica se o texto parece uma resposta curta a uma pergunta da ARIS.
+
+        NÃO deve tratar como resposta:
+        - Perguntas do usuário
+        - Afirmações casuais/comentários
+        - Cumprimentos
+        - Frases que não fazem sentido como resposta direta
+        """
         lower = text.strip().lower()
         if not self._last_aris_question:
             return False
         if text.strip().endswith("?"):
             return False
-        if lower in ("nao", "não", "sim", "ok", "ta", "tá", "tbm", "tambem",
-                     "s", "obrigado", "obrigada", "valeu", "legal", "blz"):
-            return False
+
+        # Palavras/frases que NÃO são respostas a perguntas
+        nao_respostas = (
+            # Palavras de preenchimento/conversa casual
+            "sabe", "sei", "nao sei", "não sei", "talvez", "quem sabe",
+            "presiz", "precisa", "preciso", "quer", "quero", "vou",
+            "vamos", "bora", "beleza", "blz", "show",
+            "entendi", "entendido", "aham", "hm", "hmm", "eh", "é",
+            "pois é", "pois e", "serio", "sério", "mentira", "brincadeira",
+            "kkk", "kkkk", "rs", "rsrs", "haha", "hehe",
+            "eai", "e ai", "oi", "ola", "olá", "tudo bem", "td bem",
+            "como vai", "como ta", "como tá", "de boa", "tranquilo",
+            # Respostas de confirmação/negação simples
+            "sim", "nao", "não", "ok", "ta", "tá", "tbm", "tambem",
+            "s", "obrigado", "obrigada", "valeu", "legal", "blz",
+        )
+        for nr in nao_respostas:
+            if lower == nr or lower.startswith(nr + " ") or f" {nr}" in lower:
+                return False
+
+        # Se contém palavras de pergunta -> é uma nova pergunta, não resposta
+        question_words = ("quem", "qual", "como", "por que", "onde", "quando",
+                          "o que", "quant", "tera", "tem ", "pode me", "me fala",
+                          "me diz", "fala", "diz", "explica", "conta")
+        for qw in question_words:
+            if lower.startswith(qw) or f" {qw}" in lower:
+                return False
+
+        # Se contém conectivos de continuação -> é comentário, não resposta
+        conectivos = ("porque", "pq", "ja que", "já que", "se ", "entao", "então",
+                      "mas ", "porem", "porém", "contudo", "logo")
+        for c in conectivos:
+            if c in lower:
+                return False
+
         words = text.split()
-        return 1 <= len(words) <= 4
+        return 1 <= len(words) <= 3
 
     def _learn_answer(self, text: str, voice) -> bool:
         """Guarda a resposta curta do usuário à pergunta recém-feita."""

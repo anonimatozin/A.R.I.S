@@ -84,6 +84,17 @@ class DeterministicEngine:
         (r"(?i)(analis|analiz|veja|ver\b|olha|leia|ler|descreva|examine|observ)\w*\s+(?:a\s+|minha\s+)?tela", "vision", "analyze", {}),
         (r"(?i)(?:o\s*que|oque)\s*(?:tem|aparece|est[áa]\s+(?:aberto|aparecendo|acontecendo))\w*\s+(?:na|em)\s+tela", "vision", "analyze", {}),
         (r"(?i)(captur|captar|print|screenshot|fotograf)\w*\s+(?:a\s+|da\s+|de\s+)?tela|screenshot", "awareness", "capture", {}),
+        # Gmail — regras específicas ANTES da genérica
+        (r"(?i)(leia|ler|read)\w*\s+(?:o\s+)?(?:e[- ]?mail|mensagem|email)", "gmail", "read", {}),
+        (r"(?i)(busqu|busc|search|procur|pesquis)\w*\s+.{0,10}(e[- ]?mail|mensagem|email|gmail|do\s|da\s|de\s)", "gmail", "search", {}),
+        (r"(?i)(apag|delet|remov|exclu|lixeira|trash)\w*.{0,5}(todos?|todas?|all)\w*.{0,10}(e[- ]?mail|mensagem|email|gmail)", "gmail", "trash", {"bulk": True}),
+        (r"(?i)(apag|delet|remov|exclu|lixeira|trash)\w*.{0,15}(e[- ]?mail|mensagem|email|gmail)", "gmail", "trash", {}),
+        (r"(?i)(restaur|untrash|recuper)\w*.{0,10}(e[- ]?mail|mensagem|email|gmail)", "gmail", "untrash", {}),
+        (r"(?i)(marqu|marc|mark)\w*.{0,10}(lido|read|como lido)", "gmail", "mark_read", {}),
+        (r"(?i)(marqu|marc|mark)\w*.{0,10}(não lido|nao lido|unread)", "gmail", "mark_unread", {}),
+        (r"(?i)(bloque|block|imped|não receb|nao receb)\w*.{0,10}(e[- ]?mail|mensagem|remetente|email|gmail)", "gmail", "block_sender", {}),
+        # Gmail — regra genérica (depois das específicas)
+        (r"(?i)\b(gmail|e[- ]?mail|caixa\s*(de\s*)?entrada|inbox|mensagem|mensagens|email)\b", "gmail", "list", {}),
     ]
 
     # App canonicalização

@@ -9,6 +9,15 @@ from datetime import datetime
 from pathlib import Path
 
 
+def _ps_quote(text: str) -> str:
+    """Escapa texto para uso em string PowerShell single-quoted.
+
+    Em PowerShell, strings single-quoted não interpretam variáveis.
+    Aspas internas são escapadas com dupla aspa.
+    """
+    return "'" + text.replace("'", "''") + "'"
+
+
 class NotificationManager:
     """Gerenciador de notificações do Windows."""
 
@@ -64,6 +73,14 @@ class NotificationManager:
         Returns:
             Mensagem de resultado.
         """
+        # Validação de segurança ANTES de qualquer processamento
+        from core.security.shell import validate_shell_input, ShellInjectionError
+        try:
+            validate_shell_input(title)
+            validate_shell_input(message)
+        except ShellInjectionError:
+            return "Notificação rejeitada: input contém caracteres proibidos"
+
         # Registrar no histórico
         entry = {
             "title": title,
@@ -105,18 +122,23 @@ class NotificationManager:
 
         # Fallback: PowerShell balloon
         try:
-            ps_script = f'''
-            [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null
-            $balloon = New-Object System.Windows.Forms.NotifyIcon
-            $balloon.Icon = [System.Drawing.SystemIcons]::Information
-            $balloon.BalloonTipIcon = "Info"
-            $balloon.BalloonTipTitle = "{title}"
-            $balloon.BalloonTipText = "{message}"
-            $balloon.Visible = $true
-            $balloon.ShowBalloonTip({duration * 1000})
-            Start-Sleep -Seconds {duration}
-            $balloon.Dispose()
-            '''
+            ps_script = (
+                '[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms") | Out-Null; '
+                '$balloon = New-Object System.Windows.Forms.NotifyIcon; '
+                '$balloon.Icon = [System.Drawing.SystemIcons]::Information; '
+                '$balloon.BalloonTipIcon = "Info"; '
+                '$balloon.BalloonTipTitle = {0}; '
+                '$balloon.BalloonTipText = {1}; '
+                '$balloon.Visible = $true; '
+                '$balloon.ShowBalloonTip({2}); '
+                'Start-Sleep -Seconds {3}; '
+                '$balloon.Dispose()'
+            ).format(
+                _ps_quote(title),
+                _ps_quote(message),
+                duration * 1000,
+                duration,
+            )
             import subprocess
             subprocess.run(["powershell", "-Command", ps_script], capture_output=True, timeout=duration + 5)
             return f"Notificação enviada: {title}"

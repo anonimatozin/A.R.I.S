@@ -56,6 +56,13 @@ class Settings:
     ESP32_WS_PORT: int = field(init=False)
     ESP32_SIMULATION: bool = field(init=False)
 
+    # Saudação contextual
+    GREETING_TIMEZONE: str = field(init=False)
+    GREETING_LATITUDE: float = field(init=False)
+    GREETING_LONGITUDE: float = field(init=False)
+    GREETING_CITY: str = field(init=False)
+    GREETING_COOLDOWN_HOURS: int = field(init=False)
+
     def __post_init__(self) -> None:
         """Inicializa valores derivados e carrega variáveis de ambiente."""
         object.__setattr__(self, "LOG_DIR", self.BASE_DIR / "logs")
@@ -77,6 +84,13 @@ class Settings:
         object.__setattr__(self, "ESP32_ENABLED", os.getenv("ESP32_ENABLED", "true").lower() == "true")
         object.__setattr__(self, "ESP32_WS_PORT", int(os.getenv("ESP32_WS_PORT", "8766")))
         object.__setattr__(self, "ESP32_SIMULATION", os.getenv("HARDWARE_SIMULATION", "false").lower() == "true")
+
+        # Saudação contextual
+        object.__setattr__(self, "GREETING_TIMEZONE", os.getenv("ARIS_GREETING_TIMEZONE", "America/Sao_Paulo"))
+        object.__setattr__(self, "GREETING_LATITUDE", float(os.getenv("ARIS_GREETING_LATITUDE", "-23.55")))
+        object.__setattr__(self, "GREETING_LONGITUDE", float(os.getenv("ARIS_GREETING_LONGITUDE", "-46.63")))
+        object.__setattr__(self, "GREETING_CITY", os.getenv("ARIS_GREETING_CITY", "São Paulo"))
+        object.__setattr__(self, "GREETING_COOLDOWN_HOURS", int(os.getenv("ARIS_GREETING_COOLDOWN_HOURS", "4")))
 
     def ensure_directories(self) -> None:
         """Cria os diretórios necessários se não existirem."""

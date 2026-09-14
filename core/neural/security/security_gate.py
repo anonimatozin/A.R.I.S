@@ -51,16 +51,21 @@ class SecurityGate:
         - Risco CRITICAL → REQUIRES_CONFIRMATION (a confirmação é
           resolvida pelo CommandRegistry, que possui o mecanismo de
           token + senha).
+        - SafetyManager可供（se injetado）→ enriquece classificação
+          com níveis de permissão (SAFE/CAUTION/DANGER/CRITICAL).
     """
 
     MAX_PARAM_SIZE = 4096
 
-    def __init__(self, command_registry=None, logger: Logger | None = None) -> None:
+    def __init__(self, command_registry=None, logger: Logger | None = None,
+                 safety_manager=None) -> None:
         self._registry = command_registry
         self._logger = logger
+        self._safety = safety_manager
         self._denied_count = 0
         self._approved_count = 0
         self._audited: list[str] = []
+        self._security_log: list[dict] = []
 
     def _capabilities(self) -> set[str]:
         """Conjunto de módulos conhecidos (allowlist).
@@ -85,6 +90,7 @@ class SecurityGate:
         if module == "exit":
             result = GateResult(GateOutcome.APPROVED, "encerramento autorizado", decision)
             self._approved_count += 1
+            self._log_security("approved", decision, "exit_always_allowed")
             return result
 
         # Validação de entrada básica (evita payloads absurdos)
@@ -96,6 +102,7 @@ class SecurityGate:
                     decision,
                 )
                 self._record_denial(result)
+                self._log_security("denied", decision, f"param_{key}_too_large")
                 return result
 
         # Allowlist de capacidades
@@ -106,6 +113,7 @@ class SecurityGate:
                 decision,
             )
             self._record_denial(result)
+            self._log_security("denied", decision, f"unknown_capability_{module}")
             if self._logger:
                 self._logger.warning(
                     f"SecurityGate: negada capacidade desconhecida '{module}' "
@@ -113,8 +121,23 @@ class SecurityGate:
                 )
             return result
 
-        # Classificação de risco
+        # Enriquecimento via SafetyManager (se disponível)
         risk = decision.risk
+        action_name = decision.action
+        if self._safety is not None:
+            from modules.safety import SafetyLevel
+            level = self._safety.get_action_level(action_name)
+            # Mapear SafetyLevel → risk numérico (se o risk do Decision for mais baixo)
+            level_to_risk = {
+                SafetyLevel.SAFE: 1,
+                SafetyLevel.CAUTION: 2,
+                SafetyLevel.DANGER: 3,
+                SafetyLevel.CRITICAL: 4,
+            }
+            safety_risk = level_to_risk.get(level, risk)
+            risk = max(risk, safety_risk)  # Usar o mais alto
+
+        # Classificação de risco
         if risk >= 4:  # CRITICAL
             result = GateResult(
                 GateOutcome.REQUIRES_CONFIRMATION,
@@ -136,11 +159,30 @@ class SecurityGate:
         if result.audit_required:
             self._audited.append(f"{module}/{decision.action}")
         decision.approved = result.is_allowed
+        self._log_security("approved" if result.is_allowed else "denied", decision, result.reason)
         return result
 
     def _record_denial(self, result: GateResult) -> None:
         self._denied_count += 1
         result.decision.approved = False
+
+    def _log_security(self, action: str, decision: Decision, reason: str) -> None:
+        """Unified security audit log entry."""
+        from datetime import datetime
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "module": decision.module,
+            "decision_action": decision.action,
+            "risk": decision.risk,
+            "source": decision.source,
+            "reason": reason,
+        }
+        self._security_log.append(entry)
+
+    def get_security_log(self, limit: int = 50) -> list[dict]:
+        """Retorna últimas entradas do security log unificado."""
+        return self._security_log[-limit:]
 
     def get_stats(self) -> dict[str, Any]:
         return {
@@ -148,4 +190,5 @@ class SecurityGate:
             "denied": self._denied_count,
             "audited": len(self._audited),
             "capabilities": len(self._capabilities()),
+            "security_log_entries": len(self._security_log),
         }

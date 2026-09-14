@@ -39,6 +39,8 @@ class BrowserAutomation:
             self._browser = await self._playwright.chromium.launch(headless=headless)
             self._context = await self._browser.new_context()
             self._page = await self._context.new_page()
+            # Proteção SSRF: validar cada hop de redirect via route handler
+            await self._page.route("**/*", self._validate_redirect_hop)
             return "Navegador iniciado"
         except Exception as e:
             return f"Erro ao iniciar navegador: {e}"
@@ -61,12 +63,30 @@ class BrowserAutomation:
         """Navega para uma URL."""
         if not self._page:
             return "Navegador não iniciado"
+        from core.security.shell import validate_url, InputValidationError
+        try:
+            validate_url(url)
+        except InputValidationError as e:
+            return f"URL rejeitada: {e}"
         try:
             await self._page.goto(url, wait_until="domcontentloaded")
             title = await self._page.title()
             return f"Navegado para: {title}"
         except Exception as e:
             return f"Erro ao navegar: {e}"
+
+    def _validate_redirect_hop(self, route) -> None:
+        """Route handler: valida URL apenas em requests de navegação."""
+        from core.security.shell import validate_url, InputValidationError
+        # Só validar requests de navegação (não assets, scripts, etc.)
+        if not route.request.is_navigation_request():
+            route.continue_()
+            return
+        try:
+            validate_url(route.request.url)
+            route.continue_()
+        except InputValidationError:
+            route.abort()
 
     async def get_content(self, selector: str | None = None) -> str:
         """Retorna o conteúdo da página."""
@@ -151,14 +171,14 @@ class BrowserAutomation:
             return f"Erro ao preencher formulário: {e}"
 
     async def evaluate(self, expression: str) -> str:
-        """Executa JavaScript na página."""
-        if not self._page:
-            return "Navegador não iniciado"
-        try:
-            result = await self._page.evaluate(expression)
-            return str(result)
-        except Exception as e:
-            return f"Erro ao executar JS: {e}"
+        """Executa JavaScript na página.
+
+        NOTA DE SEGURANÇA: Este método é intencionalmente não exposto
+        via handler (não registrado como action no CommandRegistry).
+        Não deve ser chamado diretamente — use get_content() ou
+        get_html() para extrair dados da página.
+        """
+        return "Execução de JS arbitrário desativada por segurança. Use get_content() para extrair dados."
 
     async def wait_for(self, selector: str, timeout: int = 10000) -> str:
         """Espera um elemento aparecer."""

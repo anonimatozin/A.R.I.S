@@ -144,6 +144,11 @@ class DesktopAwareness:
 
     def extract_text_from_image(self, image_path: str) -> str:
         """Extrai texto de uma imagem específica."""
+        from core.security.shell import safe_resolve, PathTraversalError
+        try:
+            safe_resolve(Path(__file__).resolve().parent.parent, image_path)
+        except PathTraversalError as e:
+            return str(e)
         if not self.ocr_available:
             return "OCR não disponível"
 

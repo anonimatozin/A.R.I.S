@@ -15,7 +15,7 @@ class ESP32Config:
     # Conexão
     enabled: bool = field(default_factory=lambda: os.getenv("ESP32_ENABLED", "true").lower() == "true")
     connection_type: str = field(default_factory=lambda: os.getenv("ESP32_CONNECTION", "websocket"))
-    ws_host: str = field(default_factory=lambda: os.getenv("ESP32_WS_HOST", "0.0.0.0"))
+    ws_host: str = field(default_factory=lambda: os.getenv("ESP32_WS_HOST", "127.0.0.1"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("ESP32_WS_PORT", "8766")))
     esp32_ip: str = field(default_factory=lambda: os.getenv("ESP32_IP", ""))
 

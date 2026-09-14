@@ -339,7 +339,16 @@ class MemoryManager:
         }
 
     def should_save(self, text: str) -> bool:
-        """Decide se uma informação deve ser salva como memória."""
+        """Decide se uma informação deve ser salva como memória.
+
+        Critérios:
+        - Exatamente igual a um padrão de saudação/ack → NÃO salva
+        - Menos de 4 palavras → NÃO salva
+        - Pergunta (termina com ?) → NÃO salva (é conversa, não fato)
+        - Contém palavra-chave de Preferência/Perfil/Config → salva
+        - 8+ palavras E contém termo informativo → salva
+        - Caso contrário → NÃO salva (evita poluição)
+        """
         text_lower = text.lower().strip()
 
         skip_patterns = [
@@ -347,28 +356,70 @@ class MemoryManager:
             "obrigado", "obrigada", "valeu",
             "tchau", "até mais", "bye",
             "ok", "entendido", "certo",
+            "sim", "nao", "não", "beleza", "blz", "show",
+            "ta", "tá", "eai", "e ai", "oi", "ola", "olá",
+            "tudo bem", "td bem", "de boa", "tranquilo",
+            "entendi", "entendido", "aham", "hm", "hmm",
+            "kkk", "kkkk", "rs", "rsrs", "haha", "hehe",
+            "serio", "sério", "mentira", "brincadeira",
         ]
         for pattern in skip_patterns:
             if text_lower == pattern:
                 return False
 
+        # Não salvar frases muito curtas (menos de 4 palavras)
         if len(text.split()) < 4:
             return False
 
+        # Perguntas NÃO são fatos para salvar
+        if text.strip().endswith("?"):
+            return False
+
+        # Não salvar se parecer conversa casual/filler
+        filler_patterns = (
+            "sabe", "sei", "nao sei", "não sei", "talvez", "quem sabe",
+            "presiz", "precisa", "preciso", "quer", "quero", "vou",
+            "vamos", "bora", "pois é", "pois e", "mas ", "entao", "então",
+            "eai", "e ai", "como vai", "como ta", "como tá", "de boa",
+        )
+        for fp in filler_patterns:
+            if text_lower.startswith(fp + " ") or f" {fp}" in text_lower or text_lower == fp:
+                return False
+
+        # Comandos/ações NÃO devem ser salvos como memória
+        command_starters = (
+            "abra", "abre", "liste", "busque", "execute", "marque",
+            "apague", "delete", " rode", "toque", "pesquise", "analise",
+            "fecha", "feche", "limpe", "reinicie", "atualize",
+        )
+        for starter in command_starters:
+            if text_lower.startswith(starter):
+                return False
+
+        # Palavras-chave de informação pessoal/factual (salva)
         save_keywords = [
-            "projeto", "sistema", "configuração", "preferência",
-            "dispositivo", "automação", "rota", "diretório",
+            "meu nome", "me chamo", "sou o", "sou a", "pode me chamar",
+            "meu diretório", "meu projeto", "meu computador",
+            "minha senha", "minha conta", "meu email",
+            "gosto de", "prefiro", "não gosto", "odeio",
             "importante", "lembrar", "anotar", "salvar",
-            "meu", "minha", "nosso", "nossa",
-            "gosto", "gostei", "prefiro", "adoro", "odeio", "quero",
-            "uso", "trabalho", "moro", "estudo",
-            "esp32", "arduino", "python", "código",
+            "nascimento", "aniversário", "endereço", "telefone",
         ]
         for keyword in save_keywords:
             if keyword in text_lower:
                 return True
 
-        if len(text.split()) >= 6:
-            return True
+        # Frases longas com termos informativos (8+ palavras)
+        info_terms = (
+            "projeto", "sistema", "configuração", "preferência",
+            "dispositivo", "automação", "esp32", "arduino",
+            "python", "código", "servidor", "banco de dados",
+            "instalei", "configurei", "descobri", "problema",
+            "erro", "funcionou", "parou", "atualizei",
+        )
+        if len(text.split()) >= 8:
+            for term in info_terms:
+                if term in text_lower:
+                    return True
 
         return False

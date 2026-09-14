@@ -417,3 +417,90 @@ class TestMigration:
         # Verificar que JSON antigo foi movido para backup
         backup_dir = data_dir / "_migrated_backup"
         assert backup_dir.exists()
+
+
+class TestLIKEInjection:
+    def _make_entry(self, title: str, content: str) -> dict:
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        return {
+            "id": f"like_test_{hash(title)}",
+            "category": "Knowledge",
+            "title": title,
+            "content": content,
+            "importance": 5,
+            "priority": "Média",
+            "tags": "[]",
+            "source": "test",
+            "memory_type": "semantic",
+            "created_at": now,
+            "last_accessed": now,
+            "access_count": 0,
+            "is_permanente": 0,
+        }
+
+    def test_wildcards_escaped_in_search(self, tmp_path):
+        db = MemoryDB(db_dir=tmp_path, logger=_logger())
+        db.insert_memory(self._make_entry("Test entry", "Normal content"))
+        db.insert_memory(self._make_entry("Special % entry", "Has wildcards"))
+
+        results = db.search_memories(query="%")
+        assert any("Special %" in r["title"] for r in results)
+
+    def test_underscore_escaped(self, tmp_path):
+        db = MemoryDB(db_dir=tmp_path, logger=_logger())
+        db.insert_memory(self._make_entry("test_a", "one underscore"))
+        db.insert_memory(self._make_entry("test__a", "two underscores"))
+
+        results = db.search_memories(query="test_a")
+        titles = [r["title"] for r in results]
+        assert "test_a" in titles
+        assert "test__a" not in titles
+
+
+# ── should_save() Tests (Bug fix: too aggressive) ───────────
+
+class TestShouldSave:
+    """should_save() must not save questions, commands, or casual conversation."""
+
+    def setup_method(self):
+        from core.memory import MemoryManager
+        self.mm = MemoryManager.__new__(MemoryManager)
+
+    def test_question_not_saved(self):
+        """Questions ending with ? should NOT be saved."""
+        assert self.mm.should_save("o que você acha de atualizar?") is False
+
+    def test_short_question_not_saved(self):
+        assert self.mm.should_save("quem é você?") is False
+
+    def test_greeting_not_saved(self):
+        assert self.mm.should_save("bom dia") is False
+
+    def test_command_not_saved(self):
+        """Commands should not be saved as memory."""
+        assert self.mm.should_save("abra o navegador") is False
+        assert self.mm.should_save("liste minhas mensagens") is False
+        assert self.mm.should_save("apague todos os emails") is False
+
+    def test_personal_info_saved(self):
+        """Personal info with keywords should be saved."""
+        assert self.mm.should_save("meu nome é João") is True
+        assert self.mm.should_save("pode me chamar de Pedro") is True
+
+    def test_long_informative_saved(self):
+        """Long messages with info terms should be saved."""
+        assert self.mm.should_save(
+            "instalei o python 3.12 no servidor e configurei o banco de dados"
+        ) is True
+
+    def test_casual_short_not_saved(self):
+        """Short casual messages should not be saved."""
+        assert self.mm.should_save("legal") is False
+        assert self.mm.should_save("ok entendido") is False
+
+    def test_project_info_saved(self):
+        """Project-related info should be saved."""
+        assert self.mm.should_save(
+            "o projeto do esp32 está com problema no sensor de temperatura"
+        ) is True

@@ -109,10 +109,25 @@ class DesktopTools:
 
     def focus_window(self, process_name: str) -> str:
         """Foca em uma janela pelo nome do processo."""
+        from core.security.shell import (
+            validate_process_name,
+            ShellInjectionError,
+            InputValidationError,
+        )
+        try:
+            safe_name = validate_process_name(process_name)
+        except (ShellInjectionError, InputValidationError) as e:
+            return f"Entrada rejeitada: {e}"
+
+        ps_script = (
+            "$p = Get-Process -Name '{}' -ErrorAction SilentlyContinue; "
+            "if ($p) {{ Add-Type -Name Win -Namespace Native -MemberDefinition "
+            "'[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);' ; "
+            "[Native.Win]::SetForegroundWindow($p.MainWindowHandle) }}"
+        ).format(safe_name)
         try:
             result = subprocess.run(
-                ["powershell", "-Command",
-                 f"(Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue).MainWindowHandle | ForEach-Object {{ Add-Type -Name Win -Namespace Native -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);' ; [Native.Win]::SetForegroundWindow($_) }}"],
+                ["powershell", "-Command", ps_script],
                 capture_output=True, text=True, timeout=10
             )
             found = bool(result.stdout and result.stdout.strip())
@@ -189,9 +204,17 @@ class DesktopTools:
 
     def clipboard_set(self, text: str) -> str:
         """Define o conteúdo do clipboard."""
+        from core.security.shell import (
+            validate_shell_input,
+            ShellInjectionError,
+        )
+        try:
+            validate_shell_input(text)
+        except ShellInjectionError as e:
+            return f"Entrada rejeitada: {e}"
         try:
             subprocess.run(
-                ["powershell", "-Command", f"Set-Clipboard -Value '{text}'"],
+                ["powershell", "-Command", "Set-Clipboard", "-Value", text],
                 capture_output=True, timeout=5
             )
             return f"Clipboard definido: {text[:50]}..."
@@ -251,9 +274,17 @@ class DesktopTools:
 
     def screenshot(self, filename: str = "screenshot.png") -> str:
         """Captura uma screenshot."""
+        from core.security.shell import (
+            validate_filename,
+            InputValidationError,
+        )
+        try:
+            safe_name = validate_filename(filename)
+        except InputValidationError as e:
+            return f"Entrada rejeitada: {e}"
         if not self._available:
             return "pyautogui não instalado"
-        path = os.path.join(os.getcwd(), filename)
+        path = os.path.join(os.getcwd(), safe_name)
         pyautogui.screenshot(path)
         return f"Screenshot salva: {path}"
 

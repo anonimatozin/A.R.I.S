@@ -38,7 +38,11 @@ class TurboMode:
         Returns:
             Análise detalhada do arquivo.
         """
-        path = Path(filepath)
+        from core.security.shell import safe_resolve, PathTraversalError
+        try:
+            path = safe_resolve(Path(__file__).resolve().parent.parent, filepath)
+        except PathTraversalError as e:
+            return str(e)
         if not path.exists():
             return f"Arquivo não encontrado: {filepath}"
 
@@ -146,7 +150,11 @@ class TurboMode:
         Returns:
             Análise do diretório.
         """
-        path = Path(dirpath)
+        from core.security.shell import safe_resolve, PathTraversalError
+        try:
+            path = safe_resolve(Path(__file__).resolve().parent.parent, dirpath)
+        except PathTraversalError as e:
+            return str(e)
         if not path.exists() or not path.is_dir():
             return f"Diretório não encontrado: {dirpath}"
 

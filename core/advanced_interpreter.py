@@ -44,10 +44,11 @@ class AdvancedInterpreter:
     Usa IA para interpretação profunda com contexto.
     """
 
-    def __init__(self):
+    def __init__(self, memory_service=None):
         self._modules: dict[str, dict] = {}
         self._context = ConversationContext()
         self._context_history: deque = deque(maxlen=20)
+        self._memory_service = memory_service
         self._register_defaults()
 
     def _register_defaults(self) -> None:
@@ -275,47 +276,41 @@ class AdvancedInterpreter:
     def build_interpretation_prompt(self, user_message: str) -> str:
         """Constrói o prompt para interpretação avançada."""
         modules_desc = self.get_modules_for_prompt()
-        context = self._get_context_string()
+        context = self._get_context_string(user_message)
         resolved = self.resolve_references(user_message)
 
         # Sanitizar input do usuário para prevenir prompt injection
         sanitized = self._sanitize_prompt_input(resolved)
 
-        return f"""Você é o cérebro do A.R.I.S., um assistente avançado.
+        return f"""Analise a mensagem do operador e retorne resposta natural + comandos.
 
-SUA MISSÃO: Interpretar QUALQUER frase do operador e transformar em comandos estruturados.
-
-## CONTEXTO DA CONVERSA ATUAL
+## Contexto
 {context}
 
-## MÓDULOS DISPONÍVEIS
+## Módulos
 {modules_desc}
 
-## MENSAGEM DO OPERADOR
+## Mensagem do operador
 "{sanitized}"
 
-## SUA TAREFA
+## O que fazer
 
-1. **Interprete** a mensagem como um humano inteligente faria
-2. **Extraia TODAS** as intenções (podem ser várias)
-3. **Identifique** conversa vs comandos
-4. **Resolva** referências ("essa", "aquilo", "o mesmo")
-5. **Detecte** condicionais ("se... então...")
-6. **Ordene** na sequência lógica (primeiro X, depois Y)
-7. **Responda** naturalmente ao operador
+1. Interprete a mensagem
+2. Extraia TODAS as intenções (podem ser várias)
+3. Identifique: conversa vs comando
+4. Resolva referências ("essa", "aquilo")
+5. Responda naturalmente ao operador
 
-## FORMATO DE SAÍDA
-
-Responda SEMPRE neste formato exato:
+## Formato
 
 ### Resposta natural ao operador
-(Responda em português, como o A.R.I.S. falaria)
+(resposta curta e direta, em português)
 
 ### Comandos
 ```json
 [
   {{
-    "module": "nome_do_modulo",
+    "module": "nome",
     "action": "acao",
     "params": {{"parametro": "valor"}},
     "confidence": 0.95,
@@ -324,109 +319,28 @@ Responda SEMPRE neste formato exato:
 ]
 ```
 
-## REGRAS CRÍTICAS
+Se não houver comando, gere só a resposta natural (sem JSON).
 
-- **MÚLTIPLOS COMANDOS**: Uma frase pode ter 1, 2, 5, 10 comandos. Extraia TODOS.
-- **CONVERSA vs COMANDO**: "tô indo jogar" é contexto, "abre o discord" é comando.
-- **REFERÊNCIAS**: "essa" = última música mencionada. "ele" = último app mencionado.
-- **CONDICIONAIS**: "se tiver erro, me avisa" → criar ação condicional.
-- **SEQUÊNCIA**: "primeiro X, depois Y" → respeite a ordem.
-- **PREFERÊNCIAS**: "música calma" → parâmetro genre=calma.
-- **CONTEXTO**: Use o contexto da conversa para interpretar melhor.
-- **NÃO INVENTE**: Se não tem certeza, não crie o comando.
-- **CONFIDÊNCIA**: 0.0 a 1.0. Se tem certeza = 0.95. Se improvável = 0.3.
+## Regras
 
-## EXEMPLOS DE INTERPRETAÇÃO
+- MÚLTIPLOS COMANDOS: Uma frase pode ter vários. Extraia TODOS.
+- CONVERSA vs COMANDO: "tô indo jogar" é contexto, "abre o discord" é comando.
+- REFERÊNCIAS: "essa" = última música. "ele" = último app.
+- SEQUÊNCIA: "primeiro X, depois Y" → respeite a ordem.
+- CONTEXTO: Use o contexto da conversa anterior.
+- NÃO INVENTE: Se não tem certeza, não crie comando.
+- CONFIDÊNCIA: 0.0 a 1.0.
+- NUNCA crie comandos para módulos que não existem.
+- Seja PRECISO nos parâmetros (nome do app, cidade, etc).
+- Responda SEMPRE em português.
+- NUNCA comece com "Claro!", "Certamente!" ou "Como posso ajudar?".
+- Se for conversa cumprimento ("oi", "bom dia", "eai"), responda casual.
+- Se for pergunta, responda com conteúdo real.
+- Se for comando, responda curto e execute."""
 
-### Exemplo 1: Múltiplos comandos simples
-Operador: "Abre o Discord e coloca uma música no Spotify"
-```json
-[
-  {{"module": "desktop", "action": "open_app", "params": {{"app": "discord"}}, "confidence": 0.95, "order": 1}},
-  {{"module": "entertainment", "action": "tocar_musica", "params": {{"app": "spotify"}}, "confidence": 0.90, "order": 2}}
-]
-```
-
-### Exemplo 2: Comando condicional
-Operador: "Se o servidor estiver desligado, inicia ele"
-```json
-[
-  {{"module": "sys", "action": "check_server", "params": {{"condition": "if_stopped"}}, "confidence": 0.85, "order": 1, "conditional": {{"type": "if", "check": "server_stopped", "then": "start_server"}}}}
-]
-```
-
-### Exemplo 3: Contexto + referência
-Operador: "Essa ficou boa. Salva aí."
-```json
-[
-  {{"module": "entertainment", "action": "salvar", "params": {{"reference": "last_music"}}, "confidence": 0.80, "order": 1}}
-]
-```
-
-### Exemplo 4: Sequência longa
-Operador: "Fecha o jogo, abre o código e ativa a escuta"
-```json
-[
-  {{"module": "desktop", "action": "close_app", "params": {{"app": "last_game"}}, "confidence": 0.90, "order": 1}},
-  {{"module": "desktop", "action": "open_app", "params": {{"app": "editor"}}, "confidence": 0.90, "order": 2}},
-  {{"module": "dictation", "action": "start", "params": {{}}, "confidence": 0.95, "order": 3}}
-]
-```
-
-### Exemplo 5: Frase natural com contexto
-Operador: "Tô indo jogar, fecha essas coisas e deixa só o Discord"
-```json
-[
-  {{"module": "desktop", "action": "close_unnecessary", "params": {{"keep": ["discord"]}}, "confidence": 0.85, "order": 1}}
-]
-```
-
-### Exemplo 6: Comando dentro de outro
-Operador: "Abre o navegador e pesquisa previsão do tempo"
-```json
-[
-  {{"module": "desktop", "action": "open_app", "params": {{"app": "navegador"}}, "confidence": 0.95, "order": 1}},
-  {{"module": "websearch", "action": "search", "params": {{"query": "previsão do tempo"}}, "confidence": 0.95, "order": 2}}
-]
-```
-
-### Exemplo 7: Apenas conversa
-Operador: "Bom dia, como vai?"
-```json
-[]
-```
-
-### Exemplo 8: Pergunta sobre capacidades
-Operador: "Me dá ideias do que você pode fazer"
-```json
-[]
-```
-(Responda SUBSTANCIVAMENTE com suas capacidades reais. NUNCA responda "Bom dia" para isso.)
-
-### Exemplo 9: Discussão do projeto
-Operador: "O que você acha que devemos melhorar na ARIS?"
-```json
-[]
-```
-(Responda com opiniões e ideias. Use o contexto da conversa.)
-
-IMPORTANTE:
-- **NUNCA** responda "Bom dia", "Boa tarde", "Como posso ajudar?" para perguntas ou conversa
-- Perguntas → resposta SUBSTANCIVA com conteúdo real
-- Conversa natural → resposta engajada, não saudação
-- Apenas cumprimentos reais ("oi", "bom dia") recebem saudação de volta
-- Seja PRECISO nos parâmetros (nome do app, cidade, etc)
-- NUNCA crie comandos para módulos que não existem
-- Use a confiança para indicar incerteza
-- Mantenha a ordem lógica das ações
-- Responda SEMPRE em português"""
-
-    def _get_context_string(self) -> str:
-        """Gera string de contexto."""
+    def _get_context_string(self, user_message: str = "") -> str:
+        """Gera string de contexto com memórias de longo prazo."""
         recent = list(self._context_history)[-3:]
-
-        if not self._context.last_topic and not self._context.last_app and not recent:
-            return "Nenhum contexto anterior ainda (primeira interação)."
 
         parts = []
         if self._context.last_topic:
@@ -438,7 +352,6 @@ IMPORTANTE:
         if self._context.session_goals:
             parts.append(f"Objetivos da sessão: {', '.join(self._context.session_goals[-3:])}")
 
-        # Últimas 3 interações (operador e resposta do A.R.I.S.)
         if recent:
             parts.append("\nÚltimas interações:")
             for h in recent:
@@ -446,7 +359,21 @@ IMPORTANTE:
                 if h.get("response"):
                     parts.append(f"    A.R.I.S.: \"{h['response'][:150]}\"")
 
-        return "\n".join(parts) if parts else "Nenhum contexto anterior."
+        if self._memory_service and user_message:
+            try:
+                memories = self._memory_service.retrieve(user_message, limit=5)
+                if memories:
+                    parts.append("\nMemórias relevantes:")
+                    for m in memories[:5]:
+                        title = m.get("title", "")
+                        content = str(m.get("content", ""))[:160]
+                        parts.append(f"  - {title}: {content}")
+            except Exception:
+                pass
+
+        if not parts:
+            return "Nenhum contexto anterior ainda (primeira interação)."
+        return "\n".join(parts)
 
     def parse_ai_response(self, response: str) -> tuple[str, list[Intent]]:
         """Analisa a resposta da IA e extrai comandos.

@@ -231,6 +231,8 @@ class Aris:
             if self._logger:
                 self._logger.warning(f"Memória cognitiva indisponível: {e}")
 
+        self._interpreter._memory_service = self._memory_service
+
         # Vision Engine (visão computacional: tela → OCR → VLM → eventos/memória).
         self._vision = None
         try:
@@ -409,8 +411,9 @@ class Aris:
             if suggestion:
                 print(f"  💡 {suggestion}")
                 voice.speak(suggestion)
-        except Exception:
-            pass
+        except Exception as e:
+            if self._logger:
+                self._logger.debug(f"Proactive suggestion skipped: {e}")
 
     def _execute_intent_legacy(self, intent: Intent) -> None:
         """Fallback legado para módulos que ainda não foram migrados."""
@@ -657,6 +660,10 @@ class Aris:
                     speak_text = clean_response or ""
                     if spoken_parts:
                         speak_text = (speak_text + " " if speak_text else "") + " ".join(spoken_parts)
+
+                    # Limpar markdown para TTS não falar asteriscos/links
+                    from utils.voice_hybrid import HybridVoice
+                    speak_text = HybridVoice._clean_for_tts(speak_text)
 
                     # Atualizar contexto da conversa para retomar o assunto
                     # depois (ex.: "e então?", "e depois?").
@@ -1018,7 +1025,8 @@ class Aris:
         if getattr(self, "_memory_service", None):
             try:
                 self._memory_service.close()
-            except Exception:
-                pass
+            except Exception as e:
+                if self._logger:
+                    self._logger.debug(f"Memory service close: {e}")
 
         self._logger.info("A.R.I.S. encerrado.")

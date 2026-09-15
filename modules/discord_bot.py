@@ -1,7 +1,12 @@
-"""Discord Bot — adaptador de canal para A.R.I.S.
+"""Discord Bot — adaptador DM para A.R.I.S.
 
-Recebe mensagens do Discord, roteia para o NeuralCore (PC online)
-ou edge_chat (PC offline), e envia respostas de volta.
+Recebe mensagens privadas (DM) no Discord, roteia para o NeuralCore
+(PC online) ou edge_chat (PC offline), e envia respostas de volta
+para o mesmo PV.
+
+Fluxo:
+  Usuario → DM → discord_bot → CLL1 → A.R.I.S. → resposta
+  A.R.I.S. → CLL1 → discord_bot → DM → usuario
 
 Nao usa prefixo `!` — mensagem inteira vai pro pipeline.
 Nao interpreta nada por keyword — e so adaptador de canal.
@@ -32,11 +37,13 @@ DISCORD_MAX_MESSAGE_LENGTH = 2000
 
 
 class DiscordBot:
-    """Bot Discord que roteia mensagens para A.R.I.S.
+    """Bot Discord que roteia DMs para A.R.I.S.
+
+    O canal principal de conversa e o PV (DM) do bot.
+    Nao ha dependencia de DISCORD_CHANNEL_ID para conversar.
 
     Args:
         token: Token do bot Discord.
-        channel_id: ID do canal autorizado (None = todos os DMs).
         allowed_users: Lista de user IDs autorizados (None = todos).
         on_message: Callback para processar mensagem.
             Assinatura: (text: str, origin_info: dict) -> str | None
@@ -46,7 +53,6 @@ class DiscordBot:
     def __init__(
         self,
         token: str | None = None,
-        channel_id: int | None = None,
         allowed_users: list[int] | None = None,
         on_message: Callable[[str, dict], str | None] | None = None,
         logger: Logger | None = None,
@@ -58,7 +64,6 @@ class DiscordBot:
             )
 
         self._token = token or os.getenv("DISCORD_BOT_TOKEN", "")
-        self._channel_id = channel_id or self._env_int("DISCORD_CHANNEL_ID")
         self._allowed_users = allowed_users or self._env_int_list(
             "DISCORD_ALLOWED_USERS"
         )
@@ -70,11 +75,6 @@ class DiscordBot:
         self._thread: Any = None
 
     @staticmethod
-    def _env_int(key: str) -> int | None:
-        val = os.getenv(key, "")
-        return int(val) if val.isdigit() else None
-
-    @staticmethod
     def _env_int_list(key: str) -> list[int] | None:
         val = os.getenv(key, "")
         if not val:
@@ -84,6 +84,16 @@ class DiscordBot:
     @property
     def is_running(self) -> bool:
         return self._running
+
+    @property
+    def allowed_users(self) -> list[int] | None:
+        return self._allowed_users
+
+    def is_authorized(self, user_id: int) -> bool:
+        """Verifica se um user ID esta autorizado."""
+        if self._allowed_users is None:
+            return True
+        return user_id in self._allowed_users
 
     def start(self) -> None:
         """Inicia o bot em daemon thread."""
@@ -139,13 +149,14 @@ class DiscordBot:
             if message.author.bot:
                 return
 
-            if self._channel_id and message.channel.id != self._channel_id:
+            if not isinstance(message.channel, discord.DMChannel):
                 return
 
-            if self._allowed_users and message.author.id not in self._allowed_users:
-                await message.channel.send(
-                    "Voce nao esta autorizado a interagir comigo."
-                )
+            if not self.is_authorized(message.author.id):
+                if self._logger:
+                    self._logger.warning(
+                        f"DM nao autorizado de user_id={message.author.id}"
+                    )
                 return
 
             text = message.content.strip()
@@ -154,7 +165,7 @@ class DiscordBot:
 
             origin_info = {
                 "source": "discord",
-                "channel": f"discord:{message.channel.id}",
+                "channel": f"dm:{message.channel.id}",
                 "user_id": str(message.author.id),
                 "session_id": f"discord-{message.author.id}",
                 "message_id": str(message.id),

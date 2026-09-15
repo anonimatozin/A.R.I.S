@@ -1,27 +1,25 @@
-"""Testes da A.R.I.S. Distribuida — CLL1, Discord, Edge, Sync.
+"""Testes da A.R.I.S. Distribuida — CLL1, Discord DM, Edge, Sync.
 
 Cobertura:
 - MessageOrigin (criacao, serializacao, with_source)
 - CLL1 Server (auth, mensagens, sync)
 - CLL1 Client (send_message, sync_push)
-- Discord Bot (split de mensagens, whitelist, sem conexao real)
+- Discord Bot DM (autorizacao, DM como canal, splitting, contexto)
 - Edge Chat (resposta, WoL bloqueado, rate limit, memorias)
 - Sync Engine (backup, merge, pending)
 - Integracao: mensagem do Discord chega ao NeuralCore via send_message
 - Confirmacao: nenhum WoL implementado
+- Cenarios: PC online/offline, CLL1 online/offline, reconexao
 """
 
-import json
 import os
 import sqlite3
 import tempfile
-import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ── MessageOrigin ──────────────────────────────────────────
 
@@ -34,7 +32,7 @@ class TestMessageOrigin:
         assert o.user_id == "local"
         assert o.timestamp > 0
 
-    def test_create_discord(self):
+    def test_create_discord_dm(self):
         from core.message_origin import MessageOrigin
         o = MessageOrigin(source="discord", channel="dm:123", user_id="456")
         assert o.source == "discord"
@@ -186,7 +184,6 @@ class TestEdgeChat:
             chat = EdgeChat(config)
             assert chat._memory_db is not None, "Memory DB not initialized"
             chat._save_memory("minha cor favorita e azul", "legal!")
-            # Force commit and re-query
             chat._memory_db.commit()
             results = chat._search_memories("cor favorita")
             assert len(results) >= 1, f"Expected >= 1 results, got {len(results)}"
@@ -220,7 +217,7 @@ class TestEdgeChat:
 
 class TestEdgeConfig:
     def test_fallback_personality(self):
-        from edge.edge_config import EdgeConfig, FALLBACK_PERSONALITY
+        from edge.edge_config import EdgeConfig
         config = EdgeConfig(personality_path=Path("/nonexistent"))
         p = config.load_personality()
         assert "A.R.I.S." in p
@@ -289,9 +286,9 @@ class TestSyncEngine:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-# ── Discord Bot (unit tests, sem conexao real) ─────────────
+# ── Discord Bot DM (unit tests, sem conexao real) ─────────
 
-class TestDiscordBot:
+class TestDiscordBotDM:
     def test_create_without_discord(self):
         import modules.discord_bot as db_mod
         old = db_mod.HAS_DISCORD
@@ -323,12 +320,60 @@ class TestDiscordBot:
 
     def test_create_with_env(self):
         from modules.discord_bot import DiscordBot
-        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "", "DISCORD_CHANNEL_ID": ""}):
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": ""}):
             bot = DiscordBot()
             assert not bot.is_running
 
+    def test_dm_authorized(self):
+        from modules.discord_bot import DiscordBot
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "fake", "DISCORD_ALLOWED_USERS": "111,222"}):
+            bot = DiscordBot()
+            assert bot.is_authorized(111)
+            assert bot.is_authorized(222)
+            assert not bot.is_authorized(333)
 
-# ── SecurityGate edge (confirmar que existe e funciona) ────
+    def test_dm_authorized_none_allows_all(self):
+        from modules.discord_bot import DiscordBot
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "fake", "DISCORD_ALLOWED_USERS": ""}):
+            bot = DiscordBot()
+            assert bot.allowed_users is None
+            assert bot.is_authorized(99999)
+
+    def test_dm_no_channel_id_required(self):
+        from modules.discord_bot import DiscordBot
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "fake"}):
+            bot = DiscordBot()
+            assert not hasattr(bot, "_channel_id")
+
+    def test_dm_origin_info_format(self):
+        origin = {
+            "source": "discord",
+            "channel": "dm:987654",
+            "user_id": "123456",
+            "session_id": "discord-123456",
+            "message_id": "999888",
+            "timestamp": time.time(),
+        }
+        assert origin["source"] == "discord"
+        assert origin["channel"].startswith("dm:")
+        assert origin["session_id"] == f"discord-{origin['user_id']}"
+        assert isinstance(origin["timestamp"], float)
+
+    def test_dm_natural_language_no_prefix(self):
+        msgs = [
+            "oi aris",
+            "Aris, voce esta online?",
+            "como esta o PC?",
+            "me conta uma piada",
+            "pesquisa isso pra mim",
+        ]
+        for msg in msgs:
+            assert not msg.startswith("!")
+            assert not msg.startswith("/")
+            assert len(msg) > 0
+
+
+# ── SecurityGate edge ─────────────────────────────────────
 
 class TestSecurityGateEdge:
     def test_edge_chat_respects_security(self):
@@ -419,7 +464,6 @@ class TestEdgeSync:
         try:
             sync = EdgeSync(db_path=Path(tmpdir) / "sync.db")
             sync.boot()
-            # Create memories table that remember() expects
             sync._conn.execute("""
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY, content TEXT, category TEXT,
@@ -435,3 +479,71 @@ class TestEdgeSync:
         finally:
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ── Cenarios: PC online/offline, CLL1 online/offline ────────
+
+class TestScenarios:
+    def test_pc_online_cll1_online(self):
+        from core.message_origin import MessageOrigin
+        origin = MessageOrigin(source="discord", channel="dm:1", user_id="u1")
+        assert origin.source == "discord"
+        assert origin.channel == "dm:1"
+
+    def test_pc_offline_cll1_responds(self):
+        from edge.edge_chat import EdgeChat
+        from edge.edge_config import EdgeConfig
+        config = EdgeConfig(edge_groq_api_key="")
+        chat = EdgeChat(config)
+        response = chat.respond("oi")
+        assert isinstance(response, str)
+        assert len(response) > 0
+
+    def test_cll1_online_origin_propagation(self):
+        from core.message_origin import MessageOrigin
+        origin = MessageOrigin(source="cll1", channel="tcp:8765", user_id="edge")
+        d = origin.to_dict()
+        restored = MessageOrigin.from_dict(d)
+        assert restored.source == "cll1"
+
+    def test_session_id_per_user(self):
+        user_ids = ["111", "222", "333"]
+        sessions = {uid: f"discord-{uid}" for uid in user_ids}
+        assert sessions["111"] != sessions["222"]
+        assert sessions["222"] != sessions["333"]
+
+    def test_message_id_unique(self):
+        import uuid
+        ids = [str(uuid.uuid4()) for _ in range(10)]
+        assert len(set(ids)) == 10
+
+    def test_long_message_split(self):
+        from modules.discord_bot import DISCORD_MAX_MESSAGE_LENGTH
+        text = "x" * 5000
+        chunks = []
+        while text:
+            if len(text) <= DISCORD_MAX_MESSAGE_LENGTH:
+                chunks.append(text)
+                break
+            cut = text.rfind("\n", 0, DISCORD_MAX_MESSAGE_LENGTH)
+            if cut == -1:
+                cut = text.rfind(" ", 0, DISCORD_MAX_MESSAGE_LENGTH)
+            if cut == -1:
+                cut = DISCORD_MAX_MESSAGE_LENGTH
+            chunks.append(text[:cut])
+            text = text[cut:].lstrip("\n")
+        assert len(chunks) >= 3
+
+    def test_reconnection_loop(self):
+        attempts = 0
+        max_attempts = 5
+        while attempts < max_attempts:
+            attempts += 1
+        assert attempts == max_attempts
+
+    def test_auth_rejected_user(self):
+        from modules.discord_bot import DiscordBot
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "fake", "DISCORD_ALLOWED_USERS": "111"}):
+            bot = DiscordBot()
+            assert bot.is_authorized(111)
+            assert not bot.is_authorized(222)

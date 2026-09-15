@@ -10,8 +10,8 @@ import json
 import shutil
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from utils.logger import Logger
 
@@ -175,8 +175,8 @@ class SyncEngine:
                             rec.get("source", source),
                             json.dumps(tags, ensure_ascii=False),
                             json.dumps(entities, ensure_ascii=False),
-                            rec.get("created_at", time.time().isoformat()),
-                            rec.get("updated_at", time.time().isoformat()),
+                            rec.get("created_at", datetime.now(UTC).isoformat()),
+                            rec.get("updated_at", datetime.now(UTC).isoformat()),
                         ),
                     )
                     imported += 1
@@ -184,7 +184,7 @@ class SyncEngine:
             conn.commit()
             conn.close()
 
-            self._last_sync = time.time().isoformat()
+            self._last_sync = datetime.now(UTC).isoformat()
 
             if self._logger:
                 self._logger.info(

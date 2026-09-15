@@ -1,22 +1,9 @@
 @echo off
-chcp 65001 >nul
-title A.R.I.S. - Assistente de Raciocínio e Integração de Sistemas
-color 0B
-cls
+:: A.R.I.S. Launcher
+:: Inicia o A.R.I.S. com o Python do venv
+set "ARIS_DIR=C:\Users\Administrator\Documents\Default Project\ARIS"
+set "PYTHON=%ARIS_DIR%\venv\Scripts\python.exe"
 
-echo ============================================================
-echo  A.R.I.S. - Assistente de Raciocínio e Integração de Sistemas
-echo ============================================================
-echo.
-
-cd /d "%~dp0"
-
-if exist ".venv\Scripts\activate.bat" (
-    call .venv\Scripts\activate.bat
-) else if exist "venv\Scripts\activate.bat" (
-    call venv\Scripts\activate.bat
-)
-
-python main.py
-
-pause
+cd /d "%ARIS_DIR%"
+set PYTHONPATH=%ARIS_DIR%
+"%PYTHON%" main.py %*

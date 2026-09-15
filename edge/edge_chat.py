@@ -6,15 +6,13 @@ e informa quando algo esta fora do escopo (requer PC).
 
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
 import time
 import uuid
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
-from edge.edge_config import EdgeConfig, FALLBACK_PERSONALITY
+from edge.edge_config import EdgeConfig
 
 try:
     from openai import OpenAI
@@ -214,7 +212,7 @@ class EdgeChat:
             return
         try:
             mem_id = str(uuid.uuid4())[:8]
-            now = time.time().isoformat()
+            now = datetime.now(UTC).isoformat()
             self._memory_db.execute(
                 "INSERT INTO memories (id, content, category, importance, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -268,7 +266,7 @@ class EdgeChat:
                         rec.get("content", ""),
                         rec.get("category", "general"),
                         rec.get("importance", 5),
-                        rec.get("created_at", time.time().isoformat()),
+                        rec.get("created_at", datetime.now(UTC).isoformat()),
                     ),
                 )
                 imported += 1

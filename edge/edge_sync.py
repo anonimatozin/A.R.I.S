@@ -112,7 +112,6 @@ class EdgeSync:
             op = ev.get("operation", "")
             row_id = ev.get("row_id", "")
             data = ev.get("data", {})
-            created_at = ev.get("created_at", "")
 
             if not table or not op:
                 continue

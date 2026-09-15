@@ -6,7 +6,6 @@ e sincronizacao de estado entre PC e CLL1.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import socket
@@ -14,7 +13,7 @@ import struct
 import threading
 import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
 
 from utils.logger import Logger
 

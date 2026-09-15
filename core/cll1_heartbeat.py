@@ -128,7 +128,7 @@ class CLL1Heartbeat:
             self._state.status = CLL1Status.CONNECTING
 
         try:
-            pc_info = self._get_pc_status()
+            self._get_pc_status()
 
             response = self._client.heartbeat_status()
 

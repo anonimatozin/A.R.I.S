@@ -15,17 +15,18 @@ from pathlib import Path
 import core.handlers  # noqa: F401 — auto-registra todos os handlers
 from config.esp32_config import ESP32Config
 from config.settings import Settings
-from core.advanced_interpreter import AdvancedInterpreter
+from core.advanced_interpreter import AdvancedInterpreter, Intent
+from core.cll1_heartbeat import CLL1Heartbeat
+from core.cll1_server import CLL1Server
 from core.commands import registry
-from core.advanced_interpreter import Intent
+from core.gmail import GmailService
+from core.greeting import GreetingService
+from core.llm import LLMRouter
 from core.memcore import MemoryKind
 from core.memory import MemoryManager
 from core.memory_models import MemoryCategory
 from core.memory_organizer import MemoryOrganizer
 from core.message_origin import MessageOrigin
-from core.greeting import GreetingService
-from core.gmail import GmailService
-from core.llm import LLMRouter
 from core.module_manager import ModuleManager
 from core.multi_provider import MultiProviderChat
 from core.neural import NeuralCore
@@ -37,6 +38,7 @@ from core.neural.events import (
 )
 from core.perception import PerceptionConfig, PerceptionManager
 from core.services import ServiceContainer
+from core.sync_engine import SyncEngine
 from modules.auto_redaction import AutoRedaction
 from modules.browser_automation import BrowserAutomation
 from modules.chat import Chat
@@ -239,6 +241,12 @@ class Aris:
 
         self._interpreter._memory_service = self._memory_service
         self._interpreter._context_engine = self._neural.context
+
+        # CLL1 distributed components (PC = principal, CLL1 = edge)
+        self._cll1_server: CLL1Server | None = None
+        self._cll1_heartbeat: CLL1Heartbeat | None = None
+        self._sync_engine: SyncEngine | None = None
+        self._cll1_offline_mode = False
 
         # Vision Engine (visão computacional: tela → OCR → VLM → eventos/memória).
         self._vision = None
@@ -544,6 +552,9 @@ class Aris:
                 self._perception.start()
             except Exception as e:
                 self._logger.warning(f"Percepção: falha ao iniciar ({e})")
+
+        # CLL1 distributed: server, heartbeat, sync engine
+        self._start_distributed()
 
         # Exibir banner
         self._print_banner()
@@ -1034,6 +1045,63 @@ class Aris:
             if self._logger:
                 self._logger.error(f"Falha ao reiniciar a A.R.I.S.: {e}")
 
+    def _start_distributed(self) -> None:
+        """Inicializa componentes distribuidos CLL1 (server, heartbeat, sync)."""
+        import os
+
+        cll1_token = os.getenv("CLL1_TOKEN", "")
+        cll1_port = int(os.getenv("CLL1_PORT", "8765"))
+        cll1_host = os.getenv("CLL1_HOST", "0.0.0.0")
+
+        # Sync engine (sempre disponivel, mesmo sem CLL1)
+        try:
+            self._sync_engine = SyncEngine(
+                db_path=Path("D:/ARIS_MEMORY/database/aris_memory.db"),
+                logger=self._logger,
+            )
+            self._container.set("sync.engine", self._sync_engine)
+            self._logger.info("Sync Engine inicializado.")
+        except Exception as e:
+            self._logger.warning(f"Sync Engine indisponivel: {e}")
+
+        # CLL1 Server (TCP)
+        if cll1_token:
+            try:
+                self._cll1_server = CLL1Server(
+                    host=cll1_host,
+                    port=cll1_port,
+                    token=cll1_token,
+                    message_callback=self._on_cll1_message,
+                    logger=self._logger,
+                )
+                self._cll1_server.start()
+                self._container.set("cll1.server", self._cll1_server)
+                self._logger.info(f"CLL1 Server iniciado em {cll1_host}:{cll1_port}")
+            except Exception as e:
+                self._logger.warning(f"CLL1 Server indisponivel: {e}")
+
+            # CLL1 Heartbeat
+            try:
+                self._cll1_heartbeat = CLL1Heartbeat(
+                    client=None,  # usa CLL1Client interno via env vars
+                    interval=30,
+                    logger=self._logger,
+                )
+                self._cll1_heartbeat.start()
+                self._container.set("cll1.heartbeat", self._cll1_heartbeat)
+                self._logger.info("CLL1 Heartbeat iniciado.")
+            except Exception as e:
+                self._logger.warning(f"CLL1 Heartbeat indisponivel: {e}")
+        else:
+            self._logger.info("CLL1 desabilitado (CLL1_TOKEN nao definido).")
+
+    def _on_cll1_message(self, message: dict) -> None:
+        """Callback para mensagens recebidas do CLL1."""
+        text = message.get("text", "")
+        if text:
+            origin = MessageOrigin.from_dict(message)
+            self.send_message(text, origin=origin)
+
     def shutdown(self) -> None:
         """Encerra o A.R.I.S. de forma limpa."""
         self._running = False
@@ -1056,6 +1124,18 @@ class Aris:
         if getattr(self, "_perception", None):
             try:
                 self._perception.stop()
+            except Exception:
+                pass
+
+        # Parar CLL1 distributed components
+        if getattr(self, "_cll1_heartbeat", None):
+            try:
+                self._cll1_heartbeat.stop()
+            except Exception:
+                pass
+        if getattr(self, "_cll1_server", None):
+            try:
+                self._cll1_server.stop()
             except Exception:
                 pass
 

@@ -52,3 +52,24 @@ assets/*.png
 assets/*.jpg
 assets/*.gif
 assets/*.ico
+
+# Edge local state (never version sensitive data)
+edge/*.db
+edge/*.db-wal
+edge/*.db-shm
+edge/config.json
+edge/personality.txt
+edge/database/
+edge/sync_state.json
+edge/pending_sync/
+
+# Production memory (external, never versioned)
+D:/ARIS_MEMORY/
+
+# SyncEngine backups
+backups/
+backups/*.db
+
+# ClawLocal1 local state
+cll1_state.json
+cll1_heartbeat.log

@@ -10,7 +10,6 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 FALLBACK_PERSONALITY = """# A.R.I.S. (modo edge — PC offline)
 Voce e o A.R.I.S., um assistente pessoal criado pelo operador.
 Responda em portugues, seja direto e util.

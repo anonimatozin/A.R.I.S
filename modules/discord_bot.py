@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-import uuid
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 try:
     import discord

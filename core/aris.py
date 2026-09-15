@@ -22,6 +22,7 @@ from core.memcore import MemoryKind
 from core.memory import MemoryManager
 from core.memory_models import MemoryCategory
 from core.memory_organizer import MemoryOrganizer
+from core.message_origin import MessageOrigin
 from core.greeting import GreetingService
 from core.gmail import GmailService
 from core.llm import LLMRouter
@@ -287,42 +288,46 @@ class Aris:
         ):
             self._container.set(name, instance)
 
-    def send_message(self, text: str) -> None:
-        """Enfileira uma mensagem para processamento assíncrono.
+    def send_message(self, text: str, origin: MessageOrigin | None = None) -> None:
+        """Enfileira uma mensagem para processamento assincrono.
 
         Pode ser chamado de qualquer thread. O loop principal consome
-        a fila via _get_input() a cada iteração.
+        a fila via _get_input() a cada iteracao.
         """
-        self._input_queue.put(text)
+        self._input_queue.put((text, origin or MessageOrigin()))
 
-    def _get_input(self, mic_mode: bool = False) -> str:
-        """Obtém próxima entrada: fila assíncrona primeiro, depois blocking input.
+    def _get_input(self, mic_mode: bool = False) -> tuple[str, MessageOrigin]:
+        """Obtem proxima entrada: fila assincrona primeiro, depois blocking input.
 
-        Retorna string vazia se nada disponível (não-bloqueante na fila).
+        Retorna (text, origin) — text vazio se nada disponivel.
         """
-        # 1. Fila assíncrona (não-bloqueante)
+        # 1. Fila assincrona (nao-bloqueante)
         try:
-            return self._input_queue.get_nowait()
+            item = self._input_queue.get_nowait()
+            if isinstance(item, tuple):
+                return item
+            return str(item), MessageOrigin()
         except queue.Empty:
             pass
 
-        # 2. Input do usuário (bloqueante)
+        # 2. Input do usuario (bloqueante)
         if mic_mode:
             if self._hybrid_voice._recognizer is None:
-                return ""
+                return "", MessageOrigin()
             print("  Escutando...", end="\r")
             result = self._hybrid_voice.listen(timeout=6) or ""
             print(" " * 60, end="\r")
             if result:
                 print(f"  Voce disse: {result}")
-            return result
+            return result, MessageOrigin(source="voice", channel="mic", user_id="local")
         else:
-            return ArisUI.input_modern(
+            text = ArisUI.input_modern(
                 version=self._settings.VERSION,
                 provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
                 mem_count=self._memory.get_stats().get("total_memories", 0),
                 task_count=self._scheduler.get_pending_count(),
             )
+            return text, MessageOrigin(source="terminal", channel="stdin", user_id="local")
 
     def _setup_signal_handlers(self) -> None:
         """Configura handlers para sinais do sistema."""
@@ -335,7 +340,7 @@ class Aris:
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, signal_handler)
 
-    def _build_handler_context(self) -> dict:
+    def _build_handler_context(self, origin: MessageOrigin | None = None) -> dict:
         """Constrói o contexto com todas as instâncias de módulos para os handlers."""
         ctx = {
             "weather": self._weather,
@@ -384,36 +389,37 @@ class Aris:
         except Exception:
             ctx["system_report"] = ""
 
+        ctx["origin"] = origin or MessageOrigin()
         return ctx
 
-    def _execute_intent(self, intent: Intent) -> str | None:
-        """Executa uma intenção detectada pela IA.
+    def _execute_intent(self, intent: Intent, origin: MessageOrigin | None = None) -> str | None:
+        """Executa uma intencao detectada pela IA.
 
-        Delega para o CommandRegistry através do Neural Core (Security
-        Gate + Ação + Feedback). Se o handler não existe, cai no
-        fallback legacy. Retorna o resumo falável do resultado.
+        Delega para o CommandRegistry atraves do Neural Core (Security
+        Gate + Acao + Feedback). Se o handler nao existe, cai no
+        fallback legacy. Retorna o resumo falavel do resultado.
         """
         module = intent.module
         params = intent.params
 
         ArisUI.show_action(module, intent.action, params)
 
-        # Comando de saída (sempre funciona)
+        # Comando de saida (sempre funciona)
         if module == "exit":
             self.shutdown()
             return None
 
         # Tentar registry primeiro
         if registry.has_intent(module):
-            ctx = self._build_handler_context()
+            ctx = self._build_handler_context(origin=origin)
             decision = self._neural.decision.decide(intent, source="llm")
             result = self._neural.execute(decision, ctx=ctx)
-            if not result.success and result.error.startswith("Segurança:"):
+            if not result.success and result.error.startswith("Seguranca:"):
                 ArisUI.show_error(result.error)
                 return None
             return result.output if result.success else None
 
-        # Fallback: módulos sem handler registrado ainda
+        # Fallback: modulos sem handler registrado ainda
         self._execute_intent_legacy(intent)
         return None
 
@@ -458,10 +464,10 @@ class Aris:
             if self._logger:
                 self._logger.debug(f"Proactive suggestion skipped: {e}")
 
-    def _execute_intent_legacy(self, intent: Intent) -> None:
+    def _execute_intent_legacy(self, intent: Intent, origin: MessageOrigin | None = None) -> None:
         """Fallback: route through SecurityGate for unregistered handlers."""
         decision = self._neural.decision.decide(intent, source="llm_legacy")
-        ctx = self._build_handler_context()
+        ctx = self._build_handler_context(origin=origin)
         result = self._neural.execute(decision, ctx=ctx)
         if not result.success:
             if self._logger:
@@ -564,11 +570,11 @@ class Aris:
 
         while self._running:
             try:
-                # Input: fila assíncrona, teclado ou microfone
+                # Input: fila assincrona, teclado ou microfone
                 voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
                 if self._mic_mode and self._hybrid_voice._recognizer is None:
                     self._mic_mode = False
-                user_input = self._get_input(mic_mode=self._mic_mode)
+                user_input, msg_origin = self._get_input(mic_mode=self._mic_mode)
 
                 if not user_input.strip():
                     continue
@@ -689,7 +695,7 @@ class Aris:
                     # Executar todas as intencoes na ordem
                     spoken_parts = []
                     for intent in intents:
-                        part = self._execute_intent(intent)
+                        part = self._execute_intent(intent, origin=msg_origin)
                         if part:
                             spoken_parts.append(str(part))
 

@@ -94,20 +94,30 @@ def _get_pc_ip() -> str:
     return os.getenv("PC_HOST", "192.168.0.109")
 
 
+_pc_online_cache = {"result": None, "time": 0}
+
 def _check_pc_online() -> bool:
-    """Verifica se o PC esta acessivel via TCP (porta 8770 do pc_listener)."""
+    """Verifica se o PC esta acessivel via TCP (porta 8770 do pc_listener).
+    Cache de 10 segundos pra evitar checks repetidos na mesma request."""
     import os
     import socket
+    import time
+    now = time.time()
+    if _pc_online_cache["result"] is not None and now - _pc_online_cache["time"] < 10:
+        return _pc_online_cache["result"]
     host = _get_pc_ip()
     port = int(os.getenv("PC_LISTENER_PORT", "8770"))
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(3.0)
+        s.settimeout(1.5)
         result = s.connect_ex((host, port))
         s.close()
-        return result == 0
+        online = result == 0
     except Exception:
-        return False
+        online = False
+    _pc_online_cache["result"] = online
+    _pc_online_cache["time"] = now
+    return online
 
 
 def _send_pc_command(command: str, code: str = "") -> dict:
@@ -262,6 +272,10 @@ class EdgeChat:
         import re
         msg = text.lower().strip()
 
+        # Debug: log what we receive
+        import sys
+        print(f"[FAST_PATH] received: '{msg}'", file=sys.stderr)
+
         if re.match(r"^(?:eai|oi|ola|fala|bom dia|boa tarde|boa noite|hey|hello|hi)\b", msg):
             from datetime import datetime
             hour = datetime.now().hour
@@ -291,6 +305,41 @@ class EdgeChat:
         if re.match(r"^(?:aris\s+)?(?:vc|voce)\s+(?:e|eh|é)\s+(?:uma?|o)\s+.+", msg):
             return "Sou a A.R.I.S., sua assistente virtual! Posso ajudar com muitas coisas."
 
+        # Status do PC — fast path sem LLM
+        if msg in ("status", "status do pc", "pc status", "pc ta ligado", "pc ligado", "pc online"):
+            import socket
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.5)
+                result = s.connect_ex(("192.168.0.109", 8770))
+                s.close()
+                if result == 0:
+                    return "O PC esta **online**. Posso executar comandos nele."
+                else:
+                    return "O PC esta **offline**. Posso operar no modo edge com funcoes basicas."
+            except Exception:
+                return "Nao consegui verificar o PC."
+
+        # Comandos de PC — fast path sem LLM
+        if msg in ("desligar", "desliga", "shutdown", "desligar pc"):
+            return "Confirmar desligamento? Responda 'sim' pra confirmar."
+
+        if msg in ("reiniciar", "reinicia", "restart", "reboot"):
+            return "Confirmar reinicio? Responda 'sim' pra confirmar."
+
+        if msg in ("travar", "trava", "lock", "bloquear"):
+            return "Confirmar travamento? Responda 'sim' pra confirmar."
+
+        if msg in ("hora", "que horas sao", "horas", "relogio"):
+            from datetime import datetime
+            now = datetime.now()
+            return f"Sao **{now.strftime('%H:%M')}**."
+
+        if msg in ("data", "que dia e hoje", "hoje"):
+            from datetime import datetime
+            now = datetime.now()
+            return f"Hoje e **{now.strftime('%d/%m/%Y')}**."
+
         return None
 
     def _call_llm_via_pc(self, messages: list[dict]) -> str | None:
@@ -315,7 +364,7 @@ class EdgeChat:
                 method="POST",
             )
 
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 body = _json.loads(resp.read().decode("utf-8"))
                 if body.get("ok"):
                     return body.get("response", "")

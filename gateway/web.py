@@ -203,13 +203,26 @@ class GatewayHTTPHandler(BaseHTTPRequestHandler):
         if re.match(r"^(?:aris\s+)?(?:obrigad[oa]|valeu|thanks|vlw)", msg):
             return "De nada! Sempre que precisar."
 
+        # Comandos de PC — fast path, sem LLM
+        pc_commands = {
+            ("desligar", "desliga", "shutdown", "desligar pc"): "Confirmar desligamento? Responda 'sim' pra confirmar.",
+            ("reiniciar", "reinicia", "restart", "reboot"): "Confirmar reinicio? Responda 'sim' pra confirmar.",
+            ("travar", "trava", "lock", "bloquear"): "Confirmar travamento? Responda 'sim' pra confirmar.",
+        }
+        for aliases, msg_response in pc_commands.items():
+            if msg in aliases:
+                return msg_response
+
         return None
+
+    _pc_online_cache = {"result": None, "time": 0}
 
     def _llm_via_pc(self, message: str, history: list[dict]) -> str | None:
         """Chama LLM via PC listener — resolve bloqueio de IP no Groq."""
         import json as _json
         import os
         import socket
+        import time
         import urllib.request
 
         pc_host = os.getenv("PC_HOST", "192.168.0.109")
@@ -220,14 +233,20 @@ class GatewayHTTPHandler(BaseHTTPRequestHandler):
         if not api_key:
             return None
 
-        # Quick PC check
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2.0)
-            pc_online = s.connect_ex((pc_host, pc_port)) == 0
-            s.close()
-        except Exception:
-            pc_online = False
+        # Quick PC check com cache (5s)
+        now = time.time()
+        if self._pc_online_cache["result"] is not None and now - self._pc_online_cache["time"] < 5:
+            pc_online = self._pc_online_cache["result"]
+        else:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1.5)
+                pc_online = s.connect_ex((pc_host, pc_port)) == 0
+                s.close()
+            except Exception:
+                pc_online = False
+            self._pc_online_cache["result"] = pc_online
+            self._pc_online_cache["time"] = now
 
         if not pc_online:
             return None
@@ -253,7 +272,7 @@ class GatewayHTTPHandler(BaseHTTPRequestHandler):
                 method="POST",
             )
 
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 body = _json.loads(resp.read().decode("utf-8"))
                 if body.get("ok"):
                     return body.get("response", "")

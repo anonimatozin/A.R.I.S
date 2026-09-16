@@ -13,9 +13,38 @@ except ImportError:
 
 _browser_state = {"process": None, "url": None}
 
+# Cache simples de respostas LLM (evita chamadas repetidas)
+_llm_cache = {}
+_llm_cache_max = 50
+
+def _cache_key(messages):
+    """Gera chave de cache baseada nas mensagens."""
+    import hashlib
+    text = json.dumps(messages[-3:], sort_keys=True)
+    return hashlib.md5(text.encode()).hexdigest()
+
 class CmdHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def _fast_path(self, msg):
+        """Comandos rapidos que nao precisam de LLM.
+        So retorna resposta — NAO executa comandos destrutivos."""
+        if msg in ("status", "status do pc", "pc status", "pc ta ligado", "pc ligado", "pc online"):
+            return "O PC esta **online**. Posso executar comandos nele."
+        if msg in ("desligar", "desliga", "shutdown", "desligar pc"):
+            return "Confirmar desligamento? Responda 'sim' pra confirmar."
+        if msg in ("reiniciar", "reinicia", "restart", "reboot"):
+            return "Confirmar reinicio? Responda 'sim' pra confirmar."
+        if msg in ("travar", "trava", "lock", "bloquear"):
+            return "Confirmar travamento? Responda 'sim' pra confirmar."
+        if msg in ("hora", "que horas sao", "horas", "relogio"):
+            from datetime import datetime
+            return f"Sao **{datetime.now().strftime('%H:%M')}**."
+        if msg in ("data", "que dia e hoje", "hoje"):
+            from datetime import datetime
+            return f"Hoje e **{datetime.now().strftime('%d/%m/%Y')}**."
+        return None
 
     def do_GET(self):
         if self.path == "/health":
@@ -248,6 +277,27 @@ class CmdHandler(BaseHTTPRequestHandler):
         model = body.get("model", "openai/gpt-oss-120b")
         api_key = body.get("api_key", "")
 
+        # Fast path: comandos simples que nao precisam de LLM
+        if messages:
+            last_msg = messages[-1].get("content", "").lower().strip()
+            fast = self._fast_path(last_msg)
+            if fast is not None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "response": fast}).encode())
+                return
+
+        # Checar cache primeiro
+        key = _cache_key(messages)
+        if key in _llm_cache:
+            cached = _llm_cache[key]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "response": cached, "cached": True}).encode())
+            return
+
         if not api_key:
             api_key = os.getenv("EDGE_GROQ_API_KEY", "")
 
@@ -272,7 +322,7 @@ class CmdHandler(BaseHTTPRequestHandler):
                         "temperature": 0.7,
                         "max_tokens": 2048,
                     },
-                    timeout=30,
+                    timeout=15,
                 )
                 body = resp.json()
                 if "choices" not in body:
@@ -300,9 +350,14 @@ class CmdHandler(BaseHTTPRequestHandler):
                     method="POST",
                 )
 
-                with urlopen(req, timeout=30) as resp:
+                with urlopen(req, timeout=15) as resp:
                     body = json.loads(resp.read().decode("utf-8"))
                     response = body["choices"][0]["message"]["content"]
+
+            # Salvar no cache
+            if len(_llm_cache) > _llm_cache_max:
+                _llm_cache.pop(next(iter(_llm_cache)))
+            _llm_cache[key] = response
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -316,8 +371,11 @@ class CmdHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode())
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", 8770), CmdHandler)
+    from socketserver import ThreadingMixIn
+    class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+    server = ThreadedHTTPServer(("0.0.0.0", 8770), CmdHandler)
     server.socket.setsockopt(__import__('socket').SOL_SOCKET, __import__('socket').SO_REUSEADDR, 1)
-    sys.stdout.write("Listening on 8770\n")
+    sys.stdout.write("Listening on 8770 (threaded)\n")
     sys.stdout.flush()
     server.serve_forever()

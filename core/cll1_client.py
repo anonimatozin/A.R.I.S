@@ -9,7 +9,7 @@ class CLL1Client:
     """Cliente da A.R.I.S. para comunicacao com o CLL1."""
 
     def __init__(self, host=None, port=None, timeout=10):
-        self.host = host or os.getenv("CLL1_HOST", "192.168.0.104")
+        self.host = host or os.getenv("CLL1_HOST", "192.168.0.106")
         self.port = int(port or os.getenv("CLL1_PORT", "8765"))
         self.timeout = timeout
         self._session_id = str(uuid.uuid4())[:12]

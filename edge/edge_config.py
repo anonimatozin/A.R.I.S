@@ -26,7 +26,7 @@ class EdgeConfig:
     edge_groq_api_key: str = ""
     edge_model: str = "openai/gpt-oss-120b"
     edge_rate_limit: int = 100
-    cll1_host: str = "192.168.0.104"
+    cll1_host: str = "192.168.0.106"
     cll1_port: int = 8765
     cll1_token: str = ""
     memory_dir: Path = field(default_factory=lambda: Path("~/cll1/data"))
@@ -43,7 +43,7 @@ class EdgeConfig:
             edge_groq_api_key=os.getenv("EDGE_GROQ_API_KEY", ""),
             edge_model=os.getenv("EDGE_MODEL", "openai/gpt-oss-120b"),
             edge_rate_limit=int(os.getenv("EDGE_RATE_LIMIT", "100")),
-            cll1_host=os.getenv("CLL1_HOST", "192.168.0.104"),
+            cll1_host=os.getenv("CLL1_HOST", "192.168.0.106"),
             cll1_port=int(os.getenv("CLL1_PORT", "8765")),
             cll1_token=os.getenv("CLL1_TOKEN", ""),
             memory_dir=Path(os.getenv("EDGE_MEMORY_DIR", str(home / "cll1" / "data"))),

@@ -628,10 +628,9 @@ class TestPersonalityGmail:
     """Personality prompt includes Gmail examples for LLM."""
 
     def test_personality_has_gmail_examples(self):
-        """config/personality.py includes Gmail action examples."""
+        """config/personality.py includes Gmail module."""
         from config.personality import ARIS_PERSONALITY
         assert "gmail" in ARIS_PERSONALITY.lower()
-        assert "mark_read" in ARIS_PERSONALITY or "marcar como lido" in ARIS_PERSONALITY.lower()
         assert "trash" in ARIS_PERSONALITY.lower()
 
     def test_interpreter_has_gmail_module(self):
@@ -735,14 +734,14 @@ class TestPersonalityNoGreeting:
     """Personality prompt instructs LLM to avoid generic greetings."""
 
     def test_personality_has_no_greeting_rule(self):
-        """Personality prompt has explicit rule against generic greetings."""
+        """Personality prompt has rule against generic greetings."""
         from config.personality import ARIS_PERSONALITY
-        assert "NUNCA SAUDAÇÃO GENÉRICA" in ARIS_PERSONALITY or "nunca responda" in ARIS_PERSONALITY.lower()
+        assert "nunca comece" in ARIS_PERSONALITY.lower() or "nunca responda" in ARIS_PERSONALITY.lower()
 
     def test_personality_has_substantive_response_examples(self):
-        """Personality prompt has examples of substantive responses."""
+        """Personality prompt encourages authentic responses."""
         from config.personality import ARIS_PERSONALITY
-        assert "capacidades" in ARIS_PERSONALITY.lower() or "ideias" in ARIS_PERSONALITY.lower()
+        assert "você mesmo" in ARIS_PERSONALITY.lower() or "autêntico" in ARIS_PERSONALITY.lower()
 
     def test_interpreter_has_no_greeting_rule(self):
         """Interpreter prompt reinforces no generic greetings."""

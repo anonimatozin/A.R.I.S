@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A.R.I.S. Control Center</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e0; height: 100vh; overflow: hidden; }
+
+    .layout { display: flex; height: 100vh; }
+
+    /* Sidebar */
+    .sidebar { width: 280px; background: #0d0d14; border-right: 1px solid #1a1a2e; display: flex; flex-direction: column; flex-shrink: 0; }
+    .sidebar-header { padding: 20px; border-bottom: 1px solid #1a1a2e; }
+    .sidebar-header h1 { color: #00d4ff; font-size: 18px; font-weight: 600; letter-spacing: 1px; }
+    .sidebar-header .sub { color: #555; font-size: 11px; margin-top: 4px; }
+    .sidebar-section { padding: 16px 20px; border-bottom: 1px solid #1a1a2e; }
+    .sidebar-section .label { color: #555; font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px; }
+    .status-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.on { background: #00ff88; box-shadow: 0 0 6px #00ff8844; }
+    .status-dot.off { background: #ff4444; box-shadow: 0 0 6px #ff444444; }
+    .status-dot.warn { background: #ffaa00; box-shadow: 0 0 6px #ffaa0044; }
+    .sidebar-nav { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .nav-item { padding: 10px 20px; cursor: pointer; font-size: 13px; color: #888; display: flex; align-items: center; gap: 10px; transition: all 0.15s; }
+    .nav-item:hover { background: #12121a; color: #ccc; }
+    .nav-item.active { background: #12121a; color: #00d4ff; border-left: 2px solid #00d4ff; }
+    .nav-item .icon { width: 18px; text-align: center; font-size: 14px; }
+    .sidebar-footer { padding: 16px 20px; border-top: 1px solid #1a1a2e; font-size: 11px; color: #444; }
+
+    /* Main */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    /* Chat View */
+    .chat-view { flex: 1; display: flex; flex-direction: column; height: 100vh; }
+    .chat-header { padding: 16px 24px; border-bottom: 1px solid #1a1a2e; display: flex; align-items: center; justify-content: space-between; background: #0d0d14; }
+    .chat-header h2 { font-size: 15px; color: #e0e0e0; font-weight: 500; }
+    .chat-header .mode-badge { font-size: 11px; padding: 3px 10px; border-radius: 10px; background: #1a1a2e; color: #00d4ff; }
+
+    .chat-messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .chat-messages::-webkit-scrollbar { width: 6px; }
+    .chat-messages::-webkit-scrollbar-track { background: transparent; }
+    .chat-messages::-webkit-scrollbar-thumb { background: #1e1e2e; border-radius: 3px; }
+
+    .msg { max-width: 75%; display: flex; flex-direction: column; gap: 4px; }
+    .msg.user { align-self: flex-end; }
+    .msg.assistant { align-self: flex-start; }
+    .msg .bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .msg.user .bubble { background: #0f3460; color: #e0e0e0; border-bottom-right-radius: 4px; }
+    .msg.assistant .bubble { background: #16161e; color: #d0d0d0; border-bottom-left-radius: 4px; border: 1px solid #1e1e2e; }
+    .msg .meta { font-size: 10px; color: #444; padding: 0 4px; }
+    .msg.user .meta { text-align: right; }
+    .msg .file-badge { display: inline-flex; align-items: center; gap: 6px; background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 6px; padding: 6px 10px; margin-top: 6px; font-size: 12px; color: #00d4ff; }
+    .msg .file-badge .size { color: #666; }
+
+    .msg.typing .bubble { display: flex; gap: 4px; align-items: center; }
+
+    /* Message actions */
+    .msg-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 0.2s; }
+    .msg:hover .msg-actions { opacity: 1; }
+    .msg-actions button { background: none; border: none; color: #555; cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px; transition: all 0.15s; display: flex; align-items: center; gap: 4px; }
+    .msg-actions button:hover { background: #1e1e2e; color: #00d4ff; }
+    .msg-actions button.liked { color: #00ff88; }
+    .msg-actions button.disliked { color: #ff4444; }
+    .msg-actions button .label { font-size: 10px; }
+    .msg-actions .sep { width: 1px; background: #2a2a3e; margin: 4px 4px; }
+    .msg.typing .dot { width: 6px; height: 6px; background: #555; border-radius: 50%; animation: typing 1.2s infinite; }
+    .msg.typing .dot:nth-child(2) { animation-delay: 0.2s; }
+    .msg.typing .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-4px); } }
+
+    .chat-input-area { padding: 16px 24px; border-top: 1px solid #1a1a2e; background: #0d0d14; }
+    .chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
+    .chat-input-wrapper { flex: 1; background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; display: flex; align-items: flex-end; padding: 4px; transition: border-color 0.2s; }
+    .chat-input-wrapper:focus-within { border-color: #00d4ff44; }
+    .chat-input { flex: 1; background: transparent; border: none; color: #e0e0e0; padding: 10px 12px; font-size: 14px; font-family: inherit; resize: none; outline: none; max-height: 120px; min-height: 24px; line-height: 1.4; }
+    .chat-input::placeholder { color: #444; }
+    .input-btn { background: none; border: none; color: #555; cursor: pointer; padding: 8px; border-radius: 6px; transition: all 0.15s; font-size: 16px; }
+    .input-btn:hover { color: #00d4ff; background: #1a1a2e; }
+    .send-btn { background: #0f3460; border: none; color: #fff; width: 40px; height: 40px; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; font-size: 16px; flex-shrink: 0; }
+    .send-btn:hover { background: #1a5276; }
+    .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .chat-hint { text-align: center; padding: 8px; font-size: 11px; color: #333; }
+
+    /* Panels */
+    .panel-view { display: none; flex: 1; overflow-y: auto; padding: 24px; }
+    .panel-view.active { display: block; }
+    .panel-card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+    .panel-card-header { padding: 14px 18px; border-bottom: 1px solid #1e1e2e; display: flex; justify-content: space-between; align-items: center; }
+    .panel-card-header h3 { font-size: 13px; color: #00d4ff; font-weight: 500; }
+    .panel-card-body { padding: 16px 18px; }
+    .terminal { background: #0a0a0f; font-family: 'Consolas', monospace; font-size: 12px; line-height: 1.6; padding: 12px; border-radius: 6px; max-height: 300px; overflow-y: auto; }
+    .terminal .line { white-space: pre-wrap; word-break: break-all; }
+    .terminal .line.success { color: #00ff88; }
+    .terminal .line.error { color: #ff4444; }
+    .terminal .line.info { color: #00d4ff; }
+    .exec-form { display: flex; gap: 8px; margin-bottom: 12px; }
+    .exec-form input { flex: 1; background: #0a0a0f; border: 1px solid #1e1e2e; color: #e0e0e0; padding: 10px 14px; border-radius: 6px; font-family: monospace; font-size: 13px; }
+    .exec-form input:focus { outline: none; border-color: #00d4ff44; }
+    .btn { background: #0f3460; border: 1px solid #1a5276; color: #fff; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.15s; }
+    .btn:hover { background: #1a5276; }
+    .btn.sm { padding: 5px 10px; font-size: 11px; }
+    .btn.danger { background: #5c1a1a; border-color: #7a2e2e; }
+    .btn.danger:hover { background: #7a2e2e; }
+    .log-entry { font-size: 12px; font-family: monospace; padding: 5px 0; border-bottom: 1px solid #14141a; }
+    .log-entry .time { color: #555; }
+    .log-entry .op { color: #00d4ff; }
+
+    /* File list */
+    .file-list { list-style: none; }
+    .file-list li { padding: 10px 14px; border-bottom: 1px solid #14141a; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.1s; }
+    .file-list li:hover { background: #16161e; }
+    .file-list li .name { color: #d0d0d0; font-size: 13px; }
+    .file-list li .size { color: #555; font-size: 11px; min-width: 70px; text-align: right; }
+    .file-list li.dir .name { color: #00d4ff; }
+    .breadcrumb { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+    .breadcrumb span { color: #666; cursor: pointer; font-size: 12px; }
+    .breadcrumb span:hover { color: #00d4ff; }
+    .breadcrumb span:last-child { color: #d0d0d0; cursor: default; }
+
+    /* Upload overlay */
+    .upload-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+    .upload-overlay.show { display: flex; }
+    .upload-box { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 32px; text-align: center; width: 400px; }
+    .upload-box .dropzone { border: 2px dashed #1e1e2e; border-radius: 8px; padding: 40px 20px; cursor: pointer; transition: all 0.2s; }
+    .upload-box .dropzone:hover, .upload-box .dropzone.drag { border-color: #00d4ff44; background: #00d4ff08; }
+    .upload-box .dropzone .icon { font-size: 32px; margin-bottom: 12px; }
+    .upload-box .dropzone p { color: #666; font-size: 13px; }
+    .upload-box .dropzone .hint { color: #444; font-size: 11px; margin-top: 6px; }
+
+    /* Auth */
+    #auth-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .auth-box { text-align: center; }
+    .auth-box h2 { color: #00d4ff; font-size: 20px; font-weight: 500; letter-spacing: 2px; }
+    .auth-box p { color: #444; margin-top: 8px; font-size: 13px; }
+    .auth-box input { background: #12121a; border: 1px solid #1e1e2e; color: #e0e0e0; padding: 12px 16px; border-radius: 8px; width: 280px; font-size: 14px; margin-top: 20px; text-align: center; }
+    .auth-box input:focus { outline: none; border-color: #00d4ff44; }
+    .auth-box .btn { margin-top: 16px; padding: 10px 28px; font-size: 13px; }
+    .auth-error { color: #ff4444; font-size: 12px; margin-top: 10px; min-height: 16px; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="auth-overlay">
+    <div class="auth-box">
+      <h2>A.R.I.S.</h2>
+      <p>Control Center</p>
+      <input type="password" id="token-input" placeholder="Token" onkeypress="if(event.key==='Enter')authenticate()" />
+      <br>
+      <div class="auth-error" id="auth-error"></div>
+      <button class="btn" onclick="authenticate()">Conectar</button>
+    </div>
+  </div>
+
+  <div class="upload-overlay" id="upload-overlay">
+    <div class="upload-box">
+      <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+        <div class="icon">+</div>
+        <p>Arraste um arquivo ou clique para selecionar</p>
+        <div class="hint">Textos, codigos, imagens - qualquer arquivo</div>
+      </div>
+      <input type="file" id="file-input" class="hidden" multiple onchange="handleFileSelect(event)" />
+      <div style="margin-top:16px; display:flex; gap:8px; justify-content:center;">
+        <button class="btn" onclick="closeUpload()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h1>A.R.I.S.</h1>
+        <div class="sub">Control Center v2.0</div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="label">Sistema</div>
+        <div class="status-row"><span class="status-dot" id="dot-gw"></span> Gateway</div>
+        <div class="status-row"><span class="status-dot" id="dot-pc"></span> PC</div>
+        <div class="status-row"><span class="status-dot" id="dot-mode"></span> <span id="text-mode">...</span></div>
+      </div>
+
+      <div class="sidebar-nav">
+        <div class="nav-item active" data-view="chat" onclick="switchView('chat')">
+          <span class="icon">💬</span> Chat
+        </div>
+        <div class="nav-item" data-view="terminal" onclick="switchView('terminal')">
+          <span class="icon">></span> Terminal
+        </div>
+        <div class="nav-item" data-view="files" onclick="switchView('files')">
+          <span class="icon">📁</span> Arquivos
+        </div>
+        <div class="nav-item" data-view="services" onclick="switchView('services')">
+          <span class="icon">⚙</span> Servicos
+        </div>
+        <div class="nav-item" data-view="audit" onclick="switchView('audit')">
+          <span class="icon">📋</span> Audit Log
+        </div>
+        <div class="nav-item" data-view="personality" onclick="switchView('personality')">
+          <span class="icon">🧠</span> Personalidade
+        </div>
+        <div class="nav-item" data-view="capabilities" onclick="switchView('capabilities')">
+          <span class="icon">⚡</span> Capacidades
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        TCP :8765 | HTTP :8766
+      </div>
+    </div>
+
+    <div class="main">
+      <!-- CHAT VIEW -->
+      <div class="chat-view" id="view-chat">
+        <div class="chat-header">
+          <h2>Chat com A.R.I.S.</h2>
+          <span class="mode-badge" id="chat-mode">edge</span>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg assistant">
+            <div class="bubble">Ola! Sou a A.R.I.S. Pode me pedir qualquer coisa - pesquisar, abrir apps, gerenciar arquivos, agendar tarefas. Como posso ajudar?</div>
+            <div class="meta">agora</div>
+          </div>
+        </div>
+        <div class="chat-hint">Enter para enviar | Shift+Enter para nova linha | + para anexar arquivo</div>
+        <div class="chat-input-area">
+          <div class="chat-input-row">
+            <div class="chat-input-wrapper">
+              <textarea class="chat-input" id="chat-input" placeholder="Mensagem para A.R.I.S..." rows="1" onkeydown="handleChatKey(event)" oninput="autoResize(this)"></textarea>
+              <button class="input-btn" onclick="openUpload()" title="Anexar arquivo">+</button>
+            </div>
+            <button class="send-btn" id="send-btn" onclick="sendChat()" disabled>&#9654;</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TERMINAL VIEW -->
+      <div class="panel-view" id="view-terminal">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Terminal</h3>
+            <button class="btn sm" onclick="clearTerminal()">Limpar</button>
+          </div>
+          <div class="panel-card-body">
+            <div class="exec-form">
+              <input type="text" id="cmd-input" placeholder="Comando..." onkeypress="if(event.key==='Enter')execCommand()" />
+              <button class="btn" onclick="execCommand()">Executar</button>
+            </div>
+            <div class="terminal" id="terminal"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FILES VIEW -->
+      <div class="panel-view" id="view-files">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Arquivos</h3>
+            <div style="display:flex;gap:6px;">
+              <button class="btn sm" onclick="openUpload()">Upload</button>
+              <button class="btn sm" onclick="refreshFiles()">Atualizar</button>
+            </div>
+          </div>
+          <div class="panel-card-body">
+            <div class="breadcrumb" id="breadcrumb"></div>
+            <ul class="file-list" id="file-list"></ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- SERVICES VIEW -->
+      <div class="panel-view" id="view-services">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Servico</h3>
+            <button class="btn sm" onclick="refreshStatus()">Atualizar</button>
+          </div>
+          <div class="panel-card-body">
+            <pre id="service-output" style="font-size:12px; color:#00ff88; margin-bottom:12px;"></pre>
+            <div style="display:flex;gap:8px;">
+              <button class="btn" onclick="serviceAction('restart')">Reiniciar</button>
+              <button class="btn danger" onclick="serviceAction('stop')">Parar</button>
+              <button class="btn" onclick="serviceAction('enable')">Ativar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AUDIT VIEW -->
+      <div class="panel-view" id="view-audit">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Audit Log</h3>
+            <button class="btn sm" onclick="refreshAudit()">Atualizar</button>
+          </div>
+          <div class="panel-card-body" id="audit-log"></div>
+        </div>
+      </div>
+
+      <!-- PERSONALITY VIEW -->
+      <div class="panel-view" id="view-personality">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Personalidade A.R.I.S.</h3>
+            <button class="btn sm" onclick="refreshPersonality()">Atualizar</button>
+          </div>
+          <div class="panel-card-body" id="personality-panel">
+            <div style="color:#666">Carregando...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CAPABILITIES VIEW -->
+      <div class="panel-view" id="view-capabilities">
+        <div class="panel-card">
+          <div class="panel-card-header">
+            <h3>Capacidades A.R.I.S.</h3>
+            <button class="btn sm" onclick="refreshCapabilities()">Atualizar</button>
+          </div>
+          <div class="panel-card-body" id="capabilities-panel">
+            <div style="color:#666">Carregando...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let TOKEN = '';
+    const API = window.location.origin;
+    let currentPath = '.';
+    let chatHistory = [];
+    let isTyping = false;
+
+    /* --- AUTH --- */
+    async function authenticate() {
+      var input = document.getElementById('token-input');
+      var errEl = document.getElementById('auth-error');
+      var btn = document.querySelector('.auth-box .btn');
+      TOKEN = input.value.trim();
+      if (!TOKEN) { errEl.textContent = 'Digite o token'; return; }
+      btn.textContent = 'Conectando...'; btn.disabled = true;
+      try {
+        var resp = await fetch(API + '/api/status', { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+        var data = await resp.json();
+        if (!resp.ok) { errEl.textContent = data.error || 'Token invalido'; btn.textContent = 'Conectar'; btn.disabled = false; return; }
+        document.getElementById('auth-overlay').classList.add('hidden');
+        refreshStatus();
+        setInterval(refreshStatus, 15000);
+      } catch (e) { errEl.textContent = 'Erro: ' + e.message; btn.textContent = 'Conectar'; btn.disabled = false; }
+    }
+
+    async function api(path, options) {
+      options = options || {};
+      var headers = Object.assign({ 'Authorization': 'Bearer ' + TOKEN }, options.headers || {});
+      if (options.body && !options.noJson) headers['Content-Type'] = 'application/json';
+      var resp = await fetch(API + path, Object.assign({}, options, { headers: headers }));
+      if (options.raw) return resp;
+      var data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'HTTP ' + resp.status);
+      return data;
+    }
+
+    /* --- VIEWS --- */
+    function switchView(name) {
+      document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.toggle('active', el.dataset.view === name); });
+      document.querySelectorAll('.chat-view, .panel-view').forEach(function(el) { el.style.display = 'none'; });
+      var target = document.getElementById('view-' + name);
+      if (target) target.style.display = (name === 'chat') ? 'flex' : 'block';
+      if (name === 'files') refreshFiles();
+      if (name === 'audit') refreshAudit();
+      if (name === 'personality') refreshPersonality();
+      if (name === 'capabilities') refreshCapabilities();
+    }
+
+    /* --- STATUS --- */
+    async function refreshStatus() {
+      try {
+        var data = await api('/api/status');
+        document.getElementById('dot-gw').className = 'status-dot ' + (data.ok ? 'on' : 'off');
+      } catch(e) {
+        document.getElementById('dot-gw').className = 'status-dot off';
+      }
+      try {
+        var metrics = await api('/api/metrics');
+        var m = metrics.metrics || {};
+        document.getElementById('dot-pc').className = 'status-dot ' + (m.pc_online ? 'on' : 'off');
+        var mode = m.mode || 'unknown';
+        document.getElementById('text-mode').textContent = mode;
+        document.getElementById('dot-mode').className = 'status-dot ' + (mode === 'primary' ? 'on' : 'warn');
+        document.getElementById('chat-mode').textContent = mode;
+        document.getElementById('service-output').textContent = JSON.stringify(m, null, 2).substring(0, 500);
+      } catch(e) {}
+    }
+
+    /* --- CHAT --- */
+    var _msgCounter = 0;
+    function addMessage(role, text, extra) {
+      var container = document.getElementById('chat-messages');
+      var div = document.createElement('div');
+      div.className = 'msg ' + role;
+      var msgId = 'msg-' + (++_msgCounter);
+      div.dataset.msgId = msgId;
+      div.dataset.msgText = text;
+      var now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      var html = '<div class="bubble">' + escapeHtml(text) + '</div>';
+      if (extra) html += extra;
+      if (role === 'assistant') {
+        html += '<div class="msg-actions">';
+        html += '<button onclick="copyMsg(\'' + msgId + '\')" title="Copiar"><span>&#128203;</span><span class="label">Copiar</span></button>';
+        html += '<button onclick="likeMsg(\'' + msgId + '\')" id="like-' + msgId + '" title="Gostei">&#128077;<span class="label">Gostei</span></button>';
+        html += '<button onclick="dislikeMsg(\'' + msgId + '\')" id="dislike-' + msgId + '" title="Nao gostei">&#128078;<span class="label">Nao gostei</span></button>';
+        html += '<div class="sep"></div>';
+        html += '<button onclick="speakMsg(\'' + msgId + '\')" title="Ouvir">&#128266;<span class="label">Ouvir</span></button>';
+        html += '</div>';
+      }
+      html += '<div class="meta">' + now + '</div>';
+      div.innerHTML = html;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+      return div;
+    }
+
+    function getMsgText(msgId) {
+      var el = document.querySelector('[data-msg-id="' + msgId + '"]');
+      return el ? el.dataset.msgText : '';
+    }
+
+    function copyMsg(msgId) {
+      var text = getMsgText(msgId);
+      navigator.clipboard.writeText(text).then(function() {
+        var btn = document.querySelector('[data-msg-id="' + msgId + '"] .msg-actions button');
+        if (btn) { btn.classList.add('liked'); setTimeout(function(){ btn.classList.remove('liked'); }, 1000); }
+      });
+    }
+
+    function likeMsg(msgId) {
+      var text = getMsgText(msgId);
+      var el = document.getElementById('like-' + msgId);
+      var dislikeEl = document.getElementById('dislike-' + msgId);
+      if (el.classList.contains('liked')) { el.classList.remove('liked'); sendFeedback(msgId, text, 'none'); return; }
+      el.classList.add('liked');
+      dislikeEl.classList.remove('disliked');
+      sendFeedback(msgId, text, 'like');
+    }
+
+    function dislikeMsg(msgId) {
+      var text = getMsgText(msgId);
+      var el = document.getElementById('dislike-' + msgId);
+      var likeEl = document.getElementById('like-' + msgId);
+      if (el.classList.contains('disliked')) { el.classList.remove('disliked'); sendFeedback(msgId, text, 'none'); return; }
+      el.classList.add('disliked');
+      likeEl.classList.remove('liked');
+      sendFeedback(msgId, text, 'dislike');
+    }
+
+    function sendFeedback(msgId, response, rating) {
+      api('/api/feedback', {
+        method: 'POST',
+        body: JSON.stringify({ response: response, rating: rating })
+      });
+    }
+
+    function speakMsg(msgId) {
+      var text = getMsgText(msgId);
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(text);
+        u.lang = 'pt-BR';
+        u.rate = 1.0;
+        window.speechSynthesis.speak(u);
+      }
+    }
+
+    function addFileBadge(filename, size) {
+      var sizeStr = size < 1024 ? size + ' B' : size < 1048576 ? (size/1024).toFixed(1) + ' KB' : (size/1048576).toFixed(1) + ' MB';
+      return '<div class="file-badge">📄 ' + escapeHtml(filename) + ' <span class="size">' + sizeStr + '</span></div>';
+    }
+
+    function showTyping() {
+      var container = document.getElementById('chat-messages');
+      var div = document.createElement('div');
+      div.className = 'msg assistant typing';
+      div.id = 'typing-indicator';
+      div.innerHTML = '<div class="bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function hideTyping() {
+      var el = document.getElementById('typing-indicator');
+      if (el) el.remove();
+    }
+
+    async function sendChat() {
+      var input = document.getElementById('chat-input');
+      var text = input.value.trim();
+      if (!text || isTyping) return;
+
+      input.value = '';
+      autoResize(input);
+      document.getElementById('send-btn').disabled = true;
+
+      addMessage('user', text);
+      chatHistory.push({ role: 'user', content: text });
+
+      isTyping = true;
+      showTyping();
+
+      try {
+        var data = await api('/api/chat', {
+          method: 'POST',
+          body: JSON.stringify({ message: text, history: chatHistory.slice(-10) })
+        });
+        hideTyping();
+        if (data.ok) {
+          addMessage('assistant', data.response);
+          chatHistory.push({ role: 'assistant', content: data.response });
+        } else {
+          addMessage('assistant', 'Erro: ' + (data.error || 'Desconhecido'));
+        }
+      } catch (e) {
+        hideTyping();
+        addMessage('assistant', 'Erro de conexao: ' + e.message);
+      }
+
+      isTyping = false;
+    }
+
+    function handleChatKey(e) {
+      var btn = document.getElementById('send-btn');
+      btn.disabled = !e.target.value.trim();
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+    }
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    /* --- FILE UPLOAD --- */
+    function openUpload() {
+      document.getElementById('upload-overlay').classList.add('show');
+    }
+    function closeUpload() {
+      document.getElementById('upload-overlay').classList.remove('show');
+    }
+
+    var dropzone = document.getElementById('dropzone');
+    dropzone.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('drag'); });
+    dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('drag'); });
+    dropzone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropzone.classList.remove('drag');
+      uploadFiles(e.dataTransfer.files);
+    });
+
+    function handleFileSelect(e) {
+      uploadFiles(e.target.files);
+    }
+
+    async function uploadFiles(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      closeUpload();
+
+      for (var i = 0; i < fileList.length; i++) {
+        var file = fileList[i];
+        var badge = addFileBadge(file.name, file.size);
+        addMessage('user', 'Arquivo: ' + file.name, badge);
+
+        var formData = new FormData();
+        formData.append('file', file);
+
+        showTyping();
+        try {
+          var resp = await fetch(API + '/api/upload', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + TOKEN },
+            body: formData
+          });
+          var data = await resp.json();
+          hideTyping();
+          if (data.ok) {
+            addMessage('assistant', 'Arquivo "' + data.filename + '" recebido (' + formatSize(data.size) + '). O que deseja fazer com ele? Posso ler, resumir, analisar ou executar algo com o conteudo.');
+          } else {
+            addMessage('assistant', 'Erro no upload: ' + (data.error || 'Desconhecido'));
+          }
+        } catch (e) {
+          hideTyping();
+          addMessage('assistant', 'Erro no upload: ' + e.message);
+        }
+      }
+    }
+
+    /* --- TERMINAL --- */
+    async function execCommand() {
+      var input = document.getElementById('cmd-input');
+      var cmd = input.value.trim();
+      if (!cmd) return;
+      var terminal = document.getElementById('terminal');
+      terminal.innerHTML += '<div class="line info">$ ' + cmd + '</div>';
+      input.value = '';
+      try {
+        var data = await api('/api/exec', { method: 'POST', body: JSON.stringify({ command: cmd }) });
+        if (data.stdout) terminal.innerHTML += '<div class="line success">' + data.stdout + '</div>';
+        if (data.stderr) terminal.innerHTML += '<div class="line error">' + data.stderr + '</div>';
+      } catch (e) { terminal.innerHTML += '<div class="line error">Erro: ' + e.message + '</div>'; }
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function clearTerminal() { document.getElementById('terminal').innerHTML = ''; }
+
+    /* --- FILES --- */
+    async function refreshFiles(path) {
+      path = path || currentPath || '.';
+      currentPath = path;
+      try {
+        var data = await api('/api/files?path=' + encodeURIComponent(path));
+        updateBreadcrumb(path);
+        var list = document.getElementById('file-list');
+        list.innerHTML = '';
+        var files = data.files || [];
+        if (path !== '.') {
+          var li = document.createElement('li');
+          li.className = 'dir';
+          li.innerHTML = '<span class="name">.. / Voltar</span><span class="size"></span>';
+          var parent = path.split('/').slice(0, -1).join('/') || '.';
+          li.onclick = function() { refreshFiles(parent); };
+          list.appendChild(li);
+        }
+        files.forEach(function(f) {
+          var li = document.createElement('li');
+          if (f.is_dir) li.className = 'dir';
+          var icon = f.is_dir ? '/ ' : '  ';
+          var size = f.is_dir ? '' : formatSize(f.size);
+          li.innerHTML = '<span class="name">' + icon + f.name + '</span><span class="size">' + size + '</span>';
+          if (f.is_dir) {
+            li.onclick = function() { refreshFiles(f.path); };
+          } else {
+            li.onclick = function() { openFile(f.path); };
+          }
+          list.appendChild(li);
+        });
+      } catch(e) {}
+    }
+
+    function updateBreadcrumb(path) {
+      var bc = document.getElementById('breadcrumb');
+      bc.innerHTML = '';
+      var parts = path.split('/');
+      var accum = '';
+      parts.forEach(function(part, i) {
+        if (i > 0) accum += '/';
+        accum += part;
+        var span = document.createElement('span');
+        span.textContent = part + (i < parts.length - 1 ? ' / ' : '');
+        if (i < parts.length - 1) {
+          var clickPath = accum;
+          span.onclick = function() { refreshFiles(clickPath); };
+        }
+        bc.appendChild(span);
+      });
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    async function openFile(path) {
+      try {
+        var data = await api('/api/file', { method: 'POST', body: JSON.stringify({ action: 'read', path: path }) });
+        var content = atob(data.content);
+        addMessage('user', 'Arquivo: ' + path);
+        addMessage('assistant', 'Conteudo de ' + path + ':\n```\n' + content.substring(0, 3000) + '\n```');
+        switchView('chat');
+      } catch (e) { alert('Erro ao ler: ' + e.message); }
+    }
+
+    /* --- SERVICES --- */
+    async function serviceAction(action) {
+      try {
+        var data = await api('/api/service', { method: 'POST', body: JSON.stringify({ action: action }) });
+        document.getElementById('service-output').textContent = JSON.stringify(data, null, 2);
+        setTimeout(refreshStatus, 3000);
+      } catch (e) { alert('Erro: ' + e.message); }
+    }
+
+    /* --- AUDIT --- */
+    async function refreshAudit() {
+      try {
+        var data = await api('/api/audit');
+        var log = document.getElementById('audit-log');
+        log.innerHTML = '';
+        var entries = data.entries || [];
+        entries.slice().reverse().forEach(function(e) {
+          var div = document.createElement('div');
+          div.className = 'log-entry';
+          var ts = e.ts ? new Date(e.ts * 1000).toLocaleTimeString() : '';
+          div.innerHTML = '<span class="time">' + ts + '</span> <span class="op">' + (e.op || '') + '</span> ' + (e.target || '');
+          log.appendChild(div);
+        });
+      } catch(e) {}
+    }
+
+    /* --- PERSONALITY --- */
+    async function refreshPersonality() {
+      var el = document.getElementById('personality-panel');
+      try {
+        var data = await api('/api/personality');
+        var p = data.personality;
+        var traits = p.traits || {};
+        var html = '<div style="margin-bottom:16px">';
+        html += '<div style="color:#00d4ff;font-size:12px;text-transform:uppercase;margin-bottom:10px">Tracos de Personalidade</div>';
+
+        var traitLabels = {
+          formality: 'Formalidade',
+          humor: 'Humor',
+          verbosity: 'Detalhamento',
+          initiative: 'Iniciativa',
+          technical_depth: 'Profundidade Tecnica',
+          patience: 'Paciencia',
+          warmth: 'Calor Humano',
+          directness: 'Direcionamento'
+        };
+
+        Object.keys(traitLabels).forEach(function(key) {
+          var val = traits[key] || 0.5;
+          var pct = Math.round(val * 100);
+          var color = val > 0.6 ? '#00ff88' : val > 0.3 ? '#00d4ff' : '#ffaa00';
+          html += '<div style="margin-bottom:8px">';
+          html += '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">';
+          html += '<span style="color:#ccc">' + traitLabels[key] + '</span>';
+          html += '<span style="color:' + color + '">' + pct + '%</span>';
+          html += '</div>';
+          html += '<div style="background:#1a1a2e;border-radius:3px;height:6px;overflow:hidden">';
+          html += '<div style="background:' + color + ';width:' + pct + '%;height:100%;border-radius:3px;transition:width 0.3s"></div>';
+          html += '</div></div>';
+        });
+        html += '</div>';
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="color:#00d4ff;font-size:12px;text-transform:uppercase;margin-bottom:8px">Estilo Atual</div>';
+        html += '<div style="font-size:13px;color:#ccc;line-height:1.5">' + (p.style_description || '-') + '</div>';
+        html += '</div>';
+        html += '<div>';
+        html += '<div style="color:#00d4ff;font-size:12px;text-transform:uppercase;margin-bottom:8px">Interacoes</div>';
+        html += '<div style="font-size:13px;color:#ccc">' + (p.interaction_count || 0) + ' interacoes registradas</div>';
+        html += '</div>';
+        el.innerHTML = html;
+      } catch(e) {
+        el.innerHTML = '<div style="color:#666">Erro: ' + e.message + '</div>';
+      }
+    }
+
+    /* --- CAPABILITIES --- */
+    async function refreshCapabilities() {
+      var el = document.getElementById('capabilities-panel');
+      try {
+        var data = await api('/api/capabilities');
+        var pcOn = data.pc.online;
+        var html = '';
+
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">';
+        html += '<div style="width:10px;height:10px;border-radius:50%;background:' + (pcOn ? '#00ff88' : '#ff4444') + '"></div>';
+        html += '<span style="color:#ccc;font-size:13px">PC ' + (pcOn ? 'Online' : 'Offline') + '</span>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div style="margin-bottom:20px">';
+        html += '<div style="color:#00ff88;font-size:12px;text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid #1e1e2e;padding-bottom:6px">Sempre Disponivel (CLL1)</div>';
+        data.pc.always.forEach(function(c) {
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #14141a">';
+          html += '<div><span style="color:#d0d0d0;font-size:13px">' + c.name + '</span>';
+          html += '<div style="color:#555;font-size:11px">' + c.desc + '</div></div>';
+          html += '<span style="color:#00ff88;font-size:11px">CLL1</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        html += '<div style="margin-bottom:20px">';
+        html += '<div style="color:#00d4ff;font-size:12px;text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid #1e1e2e;padding-bottom:6px">Requer PC Ligado</div>';
+        data.pc.pc_on.forEach(function(c) {
+          var available = pcOn;
+          html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #14141a;opacity:' + (available ? '1' : '0.4') + '">';
+          html += '<div><span style="color:#d0d0d0;font-size:13px">' + c.name + '</span>';
+          html += '<div style="color:#555;font-size:11px">' + c.desc + '</div></div>';
+          html += '<span style="color:' + (available ? '#00d4ff' : '#555') + ';font-size:11px">' + (available ? 'PC' : 'Offline') + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        if (data.pc.pc_off.length > 0) {
+          html += '<div>';
+          html += '<div style="color:#ffaa00;font-size:12px;text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid #1e1e2e;padding-bottom:6px">PC Desligado - Ainda Posso</div>';
+          data.pc.pc_off.forEach(function(c) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #14141a">';
+            html += '<div><span style="color:#d0d0d0;font-size:13px">' + c.name + '</span>';
+            html += '<div style="color:#555;font-size:11px">' + c.desc + '</div></div>';
+            html += '<span style="color:#ffaa00;font-size:11px">Edge</span>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
+        el.innerHTML = html;
+      } catch(e) {
+        el.innerHTML = '<div style="color:#666">Erro: ' + e.message + '</div>';
+      }
+    }
+
+    document.getElementById('token-input').focus();
+  </script>
+</body>
+</html>

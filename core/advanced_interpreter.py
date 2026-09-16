@@ -42,6 +42,7 @@ class AdvancedInterpreter:
 
     Transforma qualquer frase em uma lista estruturada de comandos.
     Usa IA para interpretação profunda com contexto.
+    Agora inclui NLU local para deteccao rapida de intencoes.
     """
 
     def __init__(self, memory_service=None, context_engine=None):
@@ -50,7 +51,16 @@ class AdvancedInterpreter:
         self._context_history: deque = deque(maxlen=20)
         self._memory_service = memory_service
         self._context_engine = context_engine
+        self._nlu = None  # Lazy load
         self._register_defaults()
+
+    @property
+    def nlu(self):
+        """Lazy load do NLU engine."""
+        if self._nlu is None:
+            from core.nlu import NLUEngine
+            self._nlu = NLUEngine()
+        return self._nlu
 
     def _register_defaults(self) -> None:
         """Registra todos os módulos disponíveis."""
@@ -501,3 +511,81 @@ Se não houver comando, gere só a resposta natural (sem JSON).
             "context_app": self._context.last_app,
             "interactions": len(self._context_history),
         }
+
+    def try_nlu_fast_path(self, user_message: str) -> tuple[str, list[Intent]] | None:
+        """Tenta resolver via NLU local antes de chamar LLM.
+
+        Returns:
+            (response_text, intents) se confidence >= threshold.
+            None se precisa de LLM.
+        """
+        from core.nlu import IntentType
+
+        result = self.nlu.detect(user_message)
+
+        if self.nlu.should_use_llm(result):
+            return None
+
+        # Mapear IntentType pra modulo/acao do sistema
+        intent_map = {
+            IntentType.SEARCH: ("websearch", "search"),
+            IntentType.RESEARCH: ("intel_research", "execute"),
+            IntentType.VERIFY: ("intel_verify", "execute"),
+            IntentType.COMPARE: ("intel_compare", "execute"),
+            IntentType.LATEST: ("intel_latest", "execute"),
+            IntentType.WEATHER: ("weather", "execute"),
+            IntentType.EMAIL: ("gmail", "list"),
+            IntentType.SYSTEM: ("sys", "status"),
+            IntentType.EXPLAIN: ("websearch", "search"),
+            IntentType.SUMMARIZE: ("websearch", "search"),
+            IntentType.CALC: ("sys", "calc"),
+            IntentType.TRANSLATE: ("websearch", "search"),
+        }
+
+        mapping = intent_map.get(result.intent)
+        if mapping is None:
+            return None
+
+        module, action = mapping
+        params = dict(result.params)
+
+        # Adaptar params pro formato esperado
+        if result.intent == IntentType.SEARCH and "query" in params:
+            params["query"] = params["query"]
+        elif result.intent == IntentType.WEATHER and "city" in params:
+            params["city"] = params["city"]
+        elif result.intent == IntentType.COMPARE and "items" in params:
+            items = params.pop("items")
+            if len(items) >= 2:
+                params["item_a"] = items[0]
+                params["item_b"] = items[1]
+
+        intent = Intent(
+            module=module,
+            action=action,
+            params=params,
+            confidence=result.confidence,
+            order=1,
+        )
+
+        response = self._generate_nlu_response(result)
+        return response, [intent]
+
+    def _generate_nlu_response(self, result) -> str:
+        """Gera resposta curta pra NLU fast path."""
+        from core.nlu import IntentType
+        responses = {
+            IntentType.SEARCH: "Vou pesquisar isso pra voce.",
+            IntentType.RESEARCH: "Vou fazer uma pesquisa aprofundada.",
+            IntentType.VERIFY: "Vou verificar essa informacao.",
+            IntentType.COMPARE: "Vou comparar pra voce.",
+            IntentType.LATEST: "Vou buscar as ultimas noticias.",
+            IntentType.WEATHER: "Vou consultar o tempo.",
+            IntentType.EMAIL: "Vou checar seus emails.",
+            IntentType.SYSTEM: "Vou verificar o sistema.",
+            IntentType.EXPLAIN: "Vou explicar isso.",
+            IntentType.SUMMARIZE: "Vou resumir pra voce.",
+            IntentType.CALC: "Vou calcular isso.",
+            IntentType.TRANSLATE: "Vou traduzir isso.",
+        }
+        return responses.get(result.intent, "Entendi, vou processar.")

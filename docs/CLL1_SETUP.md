@@ -91,7 +91,7 @@ Preencha:
 CLL1_TOKEN=seu_token_aqui
 
 # Endereco do PC
-CLL1_HOST=192.168.0.104
+CLL1_HOST=192.168.0.106
 CLL1_PORT=8765
 
 # Groq Edge
@@ -303,8 +303,8 @@ python -m cll1.main
 ### Sem conexao com PC
 
 1. Verifique se o PC esta ligado
-2. Verifique o IP: `ping 192.168.0.104`
-3. Verifique a porta: `nc -zv 192.168.0.104 8765`
+2. Verifique o IP: `ping 192.168.0.106`
+3. Verifique a porta: `nc -zv 192.168.0.106 8765`
 4. Verifique o firewall do PC
 
 ### Bot Discord nao responde

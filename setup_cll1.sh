@@ -165,7 +165,7 @@ setup_env() {
 CLL1_TOKEN=
 
 # ── Endereco do PC principal ────────────────────────────────
-CLL1_HOST=192.168.0.104
+CLL1_HOST=192.168.0.106
 CLL1_PORT=8765
 
 # ── Groq Edge (LLM local quando PC offline) ─────────────────

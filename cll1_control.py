@@ -4,7 +4,7 @@ import os
 import sys
 import base64
 
-CLL1_HOST = "192.168.0.104"
+CLL1_HOST = "192.168.0.106"
 CLL1_PORT = 8765
 
 
@@ -84,6 +84,35 @@ def status():
     }))
 
 
+def full_status():
+    print("=== CLL1 FULL STATUS ===\n")
+
+    svc = send_request({"type": "status"})
+    if svc and svc.get("ok"):
+        print(f"Servico: {svc.get('output', 'N/A')}")
+    else:
+        print("Servico: NAO DISPONIVEL")
+
+    print()
+
+    gw = send_request({"type": "admin_ping"})
+    if gw and gw.get("ok"):
+        print(f"Gateway TCP: ATIVO (porta {CLL1_PORT})")
+    else:
+        print("Gateway TCP: DOWN")
+
+    info = send_request({"type": "exec_python", "path": "test_exec.py"})
+    if info and info.get("ok"):
+        stdout = info.get("stdout", "")
+        for line in stdout.strip().split("\n"):
+            if line.strip():
+                print(line.strip())
+    else:
+        print("Componentes: NAO DISPONIVEL")
+
+    print("\n========================")
+
+
 def put_file(local_file, remote_file=None):
     if not os.path.isfile(local_file):
         print(f"Arquivo não encontrado: {local_file}")
@@ -104,6 +133,34 @@ def put_file(local_file, remote_file=None):
         "path": remote_file,
         "content": content
     }))
+
+
+def get_file(remote_file, local_file=None):
+    if local_file is None:
+        local_file = os.path.basename(remote_file)
+
+    response = send_request({
+        "type": "get_file",
+        "path": remote_file
+    })
+
+    if not response:
+        return
+
+    if not response.get("ok"):
+        show(response)
+        return
+
+    content = response.get("content")
+
+    if not content:
+        print("Arquivo vazio ou resposta inválida.")
+        return
+
+    with open(local_file, "wb") as f:
+        f.write(base64.b64decode(content))
+
+    print(f"Arquivo recebido: {local_file}")
 
 
 def mkdir(path):
@@ -153,9 +210,13 @@ Comandos:
 
   python cll1_control.py ping
   python cll1_control.py status
+  python cll1_control.py fullstatus
 
   python cll1_control.py put arquivo.py
   python cll1_control.py put arquivo.py caminho/remoto.py
+
+  python cll1_control.py get arquivo_remoto.py
+  python cll1_control.py get arquivo_remoto.py arquivo_local.py
 
   python cll1_control.py mkdir pasta
   python cll1_control.py chmod caminho/run
@@ -181,6 +242,9 @@ def main():
     elif command == "status":
         status()
 
+    elif command == "fullstatus":
+        full_status()
+
     elif command == "put":
         if len(sys.argv) < 3:
             print("Informe o arquivo.")
@@ -195,6 +259,21 @@ def main():
         )
 
         put_file(local_file, remote_file)
+
+    elif command == "get":
+        if len(sys.argv) < 3:
+            print("Informe o arquivo remoto.")
+            return
+
+        remote_file = sys.argv[2]
+
+        local_file = (
+            sys.argv[3]
+            if len(sys.argv) >= 4
+            else None
+        )
+
+        get_file(remote_file, local_file)
 
     elif command == "mkdir":
         if len(sys.argv) < 3:

@@ -23,6 +23,25 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+def _load_dotenv(path: Path) -> None:
+    """Carrega .env simples (sem dependencia externa)."""
+    if not path.is_file():
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and value:
+                os.environ[key] = value
+
+_load_dotenv(ROOT / ".env")
+
 from cll1.router import Router  # noqa: E402
 from utils.logger import Logger  # noqa: E402
 
@@ -70,23 +89,23 @@ class CLL1Main:
         self._main_loop()
 
     def _start_gateway(self) -> None:
-        """Inicia o gateway TCP em thread separada."""
+        """Inicia o gateway TCP + HTTP em thread separada."""
         try:
-            from gateway import main as gateway_main
+            from gateway.server import run_gateway
 
-            def run_gateway():
+            def run_gw():
                 try:
-                    gateway_main()
+                    run_gateway(str(ROOT))
                 except Exception as e:
                     self._logger.error(f"Gateway erro: {e}")
 
             self._gateway_thread = threading.Thread(
-                target=run_gateway,
+                target=run_gw,
                 name="cll1-gateway",
                 daemon=True,
             )
             self._gateway_thread.start()
-            self._logger.info("Gateway TCP iniciado (porta 8765)")
+            self._logger.info("Gateway TCP+HTTP iniciado (TCP :8765, HTTP :8766)")
         except Exception as e:
             self._logger.error(f"Falha ao iniciar gateway: {e}")
 

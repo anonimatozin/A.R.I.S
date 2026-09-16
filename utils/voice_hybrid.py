@@ -11,6 +11,7 @@ Suporta STT (Speech-to-Text) via:
 
 import asyncio
 import os
+import re
 import tempfile
 import threading
 
@@ -131,9 +132,60 @@ class HybridVoice:
                 except Exception:
                     pass
 
+    @staticmethod
+    def _clean_for_tts(text: str) -> str:
+        """Limpa markdown e formatação para TTS natural."""
+        if not text:
+            return ""
+
+        clean = text
+
+        # Remover blocos de código
+        clean = re.sub(r'```[\s\S]*?```', '', clean)
+
+        # Remover inline code
+        clean = re.sub(r'`([^`]+)`', r'\1', clean)
+
+        # Remover bold/italic
+        clean = re.sub(r'\*\*\*([^*]+)\*\*\*', r'\1', clean)
+        clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', clean)
+        clean = re.sub(r'\*([^*]+)\*', r'\1', clean)
+        clean = re.sub(r'___([^_]+)___', r'\1', clean)
+        clean = re.sub(r'__([^_]+)__', r'\1', clean)
+        clean = re.sub(r'_([^_]+)_', r'\1', clean)
+
+        # Remover links [text](url) → text
+        clean = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean)
+
+        # Remover URLs
+        clean = re.sub(r'https?://\S+', '', clean)
+
+        # Remover headers markdown
+        clean = re.sub(r'^#{1,6}\s+', '', clean, flags=re.MULTILINE)
+
+        # Remover listas
+        clean = re.sub(r'^[\s]*[-*+]\s+', '', clean, flags=re.MULTILINE)
+        clean = re.sub(r'^[\s]*\d+\.\s+', '', clean, flags=re.MULTILINE)
+
+        # Remover horizontal rules
+        clean = re.sub(r'^[-*_]{3,}\s*$', '', clean, flags=re.MULTILINE)
+
+        # Remover blockquotes
+        clean = re.sub(r'^>\s*', '', clean, flags=re.MULTILINE)
+
+        # Limpar espaços extras
+        clean = re.sub(r'\n{3,}', '\n\n', clean)
+        clean = re.sub(r' {2,}', ' ', clean)
+
+        return clean.strip()
+
     async def _edge_tts_speak(self, text: str) -> None:
         """Gera áudio via edge-tts e reproduz."""
-        voice = "pt-BR-FranciscaNeural"
+        clean = self._clean_for_tts(text)
+        if not clean.strip():
+            return
+
+        voice = "pt-BR-ThalitaMultilingualNeural"
         tmp_file = os.path.join(tempfile.gettempdir(), "aris_speech.mp3")
 
         communicate = edge_tts.Communicate(text, voice)
@@ -259,7 +311,11 @@ class HybridVoice:
     def list_voices(self) -> list[str]:
         """Lista vozes disponíveis."""
         if self._tts_engine == "edge-tts":
-            return ["pt-BR-FranciscaNeural (Edge TTS)", "pt-BR-AntonioNeural (Edge TTS)"]
+            return [
+                "pt-BR-ThalitaMultilingualNeural (Edge TTS)",
+                "pt-BR-FranciscaNeural (Edge TTS)",
+                "pt-BR-AntonioNeural (Edge TTS)",
+            ]
         elif self._tts_engine and hasattr(self._tts_engine, "getProperty"):
             try:
                 voices = self._tts_engine.getProperty("voices")

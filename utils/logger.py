@@ -45,8 +45,9 @@ class Logger:
         handler.setFormatter(formatter)
         self._logger.addHandler(handler)
 
-    def _setup_file_handler(self, log_dir: Path, max_size_mb: int) -> None:
+    def _setup_file_handler(self, log_dir: Path | str, max_size_mb: int) -> None:
         """Configura o handler de arquivo com rotação."""
+        log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "aris.log"
 

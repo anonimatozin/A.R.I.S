@@ -259,6 +259,19 @@ class EdgeChat:
                     pass
                 return response
 
+            # Fallback: Ollama local no CLL1
+            response = self._call_ollama(messages)
+            if response is not None:
+                self._history.append({"role": "assistant", "content": response})
+                self._save_memory(text, response)
+                try:
+                    from core.personality import get_personality
+                    personality = get_personality()
+                    personality.record_interaction(text, response)
+                except Exception:
+                    pass
+                return response
+
             return "No momento nao consigo processar isso. O PC pode estar indisponivel. Tente novamente em instantes."
 
         except Exception as e:
@@ -365,6 +378,45 @@ class EdgeChat:
                 if body.get("ok"):
                     return body.get("response", "")
                 return None
+
+        except Exception:
+            return None
+
+    def _call_ollama(self, messages: list[dict]) -> str | None:
+        """Chama Ollama local no CLL1 como fallback."""
+        import json as _json
+        import urllib.request
+        import os
+
+        ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+        model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+
+        # Verificar se Ollama ta rodando
+        try:
+            req = urllib.request.Request(f"{ollama_host}/api/tags", method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                pass
+        except Exception:
+            return None
+
+        try:
+            payload = _json.dumps({
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "options": {"num_predict": 1024, "temperature": 0.7},
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{ollama_host}/api/chat",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = _json.loads(resp.read().decode("utf-8"))
+                return body.get("message", {}).get("content", "")
 
         except Exception:
             return None

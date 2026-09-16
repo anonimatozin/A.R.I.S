@@ -18,6 +18,12 @@ class CmdHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "service": "pc_listener"}).encode())
+            return
         if self.path == "/api/llm":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

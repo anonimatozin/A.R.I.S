@@ -138,7 +138,7 @@ class CoreOps:
             "test_exec.py", "install_bg.py", "install_direct.py", "restart_gw.py",
             "test_net2.py", "gethome.py", "find_listener.py", "test_pc_access.py",
             "check_edge.py", "read_log.py", "test_edge_direct.py",
-            "setup_persistent.py",
+            "setup_persistent.py", "cleanup.py",
         ]
         if os.path.basename(path) not in allowlist:
             return {"ok": False, "error": "script_not_allowed"}

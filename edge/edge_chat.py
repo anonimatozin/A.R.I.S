@@ -272,10 +272,6 @@ class EdgeChat:
         import re
         msg = text.lower().strip()
 
-        # Debug: log what we receive
-        import sys
-        print(f"[FAST_PATH] received: '{msg}'", file=sys.stderr)
-
         if re.match(r"^(?:eai|oi|ola|fala|bom dia|boa tarde|boa noite|hey|hello|hi)\b", msg):
             from datetime import datetime
             hour = datetime.now().hour

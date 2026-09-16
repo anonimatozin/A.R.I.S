@@ -209,26 +209,16 @@ def show_memory():
 
 def sync_with_pendrive():
     """Sincroniza knowledge graph com pendrive."""
-    pendrive = None
-    for drive in ["D:\\", "E:\\"]:
-        if os.path.exists(drive + "ARIS_MEMORY"):
-            pendrive = Path(drive + "ARIS_MEMORY")
-            break
-
-    if not pendrive:
-        print("Pendrive ARIS_MEMORY nao detectado.")
-        return
-
-    kg_file = PROJECT_DIR / "data" / "knowledge_graph.json"
-    if not kg_file.exists():
-        print("Knowledge graph local nao existe ainda.")
-        return
-
-    # Copiar pro pendrive
-    import shutil
-    dest = pendrive / "knowledge_graph.json"
-    shutil.copy2(kg_file, dest)
-    print(f"Knowledge graph sincronizado para {dest}")
+    import subprocess
+    sync_script = PROJECT_DIR / "agent" / "aris_sync.py"
+    result = subprocess.run(
+        [sys.executable, str(sync_script), "push"],
+        capture_output=True, text=True, timeout=30,
+        cwd=str(PROJECT_DIR),
+    )
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
 
 
 def interactive_chat():

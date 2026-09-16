@@ -1,9 +1,13 @@
 @echo off
-:: A.R.I.S. Launcher
-:: Inicia o A.R.I.S. com o Python do venv
+:: A.R.I.S. CLI — Chamado de qualquer pasta
+:: funciona como: aris [comando]
 set "ARIS_DIR=C:\Users\Administrator\Documents\Default Project\ARIS"
 set "PYTHON=%ARIS_DIR%\venv\Scripts\python.exe"
 
+:: Guardar pasta atual do usuario
+set "ARIS_CWD=%CD%"
+
+:: Rodar CLI
 cd /d "%ARIS_DIR%"
 set PYTHONPATH=%ARIS_DIR%
-"%PYTHON%" main.py %*
+"%PYTHON%" "%ARIS_DIR%\agent\aris_cli.py" %*

@@ -97,7 +97,10 @@ def check_gateway_online():
     """Verifica se o gateway está rodando."""
     import urllib.request
     try:
-        req = urllib.request.Request(f"{GATEWAY_URL}/api/status")
+        req = urllib.request.Request(
+            f"{GATEWAY_URL}/api/status",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
             return data.get("ok", False)
@@ -282,6 +285,7 @@ A.R.I.S. CLI — Assistente de Raciocinio e Integracao de Sistemas
 Uso:
     aris                   Chat interativo na pasta atual
     aris status            Ver status do sistema
+    aris connect           Ver mapa de conexoes
     aris chat "mensagem"   Enviar mensagem
     aris files             Listar arquivos da pasta
     aris memory            Ver memorias relevantes
@@ -290,9 +294,86 @@ Uso:
 
 Exemplos:
     aris                   # Inicia chat
+    aris connect           # Mostra todos os componentes conectados
     aris files             # Lista arquivos
     aris chat "abre o navegador"  # Comando direto
     """)
+
+
+def show_connections():
+    """Mostra mapa de conexões entre componentes."""
+    import urllib.request
+
+    print(f"\n{'='*55}")
+    print(f"  A.R.I.S. — MAPA DE CONEXOES")
+    print(f"{'='*55}")
+
+    # PC Listener
+    pc_ok = check_pc_online()
+    print(f"\n  [PC] Listener (localhost:8770)")
+    print(f"       Status: {'ONLINE' if pc_ok else 'OFFLINE'}")
+
+    # Gateway CLL1
+    gw_ok = check_gateway_online()
+    print(f"\n  [CLL1] Gateway (192.168.0.106:8766)")
+    print(f"       Status: {'ONLINE' if gw_ok else 'OFFLINE'}")
+    if gw_ok:
+        print(f"       Dashboard: http://192.168.0.106:8766")
+
+    # Discord Bot (check via Gateway)
+    if gw_ok:
+        try:
+            req = urllib.request.Request(
+                f"{GATEWAY_URL}/api/agents",
+                headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+                agents = data.get("agents", [])
+                print(f"\n  [DISCORD] Bot")
+                print(f"       Agents: {len(agents)}")
+                for a in agents:
+                    print(f"         - {a.get('name', '?')} ({a.get('status', '?')})")
+        except Exception:
+            print(f"\n  [DISCORD] Bot: nao verificavel")
+
+    # Pendrive
+    pendrive = None
+    for letter in "DEFGHIJ":
+        if os.path.exists(f"{letter}:\\ARIS_MEMORY"):
+            pendrive = f"{letter}:\\ARIS_MEMORY"
+            break
+    print(f"\n  [SYNC] Pendrive")
+    print(f"       Status: {'CONECTADO (' + pendrive + ')' if pendrive else 'NAO DETECTADO'}")
+
+    # Knowledge Graph
+    kg_file = PROJECT_DIR / "data" / "knowledge_graph.json"
+    if kg_file.exists():
+        try:
+            kg = json.loads(kg_file.read_text(encoding="utf-8"))
+            nodes = len(kg.get("nodes", {}))
+            edges = len(kg.get("edges", []))
+            print(f"\n  [MEMORIA] Knowledge Graph")
+            print(f"       Nos: {nodes} | Arestas: {edges}")
+        except Exception:
+            print(f"\n  [MEMORIA] Knowledge Graph: erro ao ler")
+    else:
+        print(f"\n  [MEMORIA] Knowledge Graph: vazio")
+
+    # Fluxo de dados
+    print(f"\n  {'─'*50}")
+    print(f"  FLUXO DE DADOS:")
+    if pc_ok and gw_ok:
+        print(f"    Discord/CLI/Web → Gateway(CLL1) → PC Listener → LLM")
+        print(f"    Todos conectados!")
+    elif pc_ok:
+        print(f"    PC Listener ativo, mas Gateway offline")
+    elif gw_ok:
+        print(f"    Gateway ativo, mas PC Listener offline")
+    else:
+        print(f"    Nenhum componente detectado")
+
+    print(f"{'='*55}\n")
 
 
 def main():
@@ -306,6 +387,8 @@ def main():
 
     if cmd == "status":
         show_status()
+    elif cmd == "connect" or cmd == "conectar":
+        show_connections()
     elif cmd == "files" or cmd == "arquivos":
         files = list_files()
         for f in files:

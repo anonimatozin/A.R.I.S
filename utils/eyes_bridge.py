@@ -66,6 +66,17 @@ MOOD_FOR_STATE: dict[str, str | None] = {
     "esp32_disconnected": None,
 }
 
+# Mini Deck (ESP32): estado Wi-Fi do deck -> expressão dos olhos.
+WIFI_FACES: dict[str, str] = {
+    "portal": "surprised",      # configurando (portal de configuração aberto)
+    "connecting": "thinking",   # conectando à rede salva
+    "connected": "happy",       # pronto
+    "failed": "error",          # falhou (credenciais preservadas no deck)
+}
+
+# Estados em que o rosto está livre para a reação de Wi-Fi assumir.
+_ESTADOS_OCIOSOS = frozenset({None, "idle", "initializing", "offline", "wifi"})
+
 _lock = threading.Lock()
 _last_state: str | None = None
 _last_mood: str | None = None
@@ -75,6 +86,7 @@ _idle_mood: str | None = None    # cache da personalidade
 _launched = False
 _sent = 0                           # comandos entregues
 _failed = 0                         # sincronizações em que os olhos não responderam
+_wifi_pendente: str | None = None   # reação Wi-Fi aguardando o idle da ARIS
 
 
 def _enabled() -> bool:
@@ -188,7 +200,11 @@ def _retry_after_launch() -> None:
             continue
         with _lock:
             state, level = _last_state, _last_speech_level
+            mood = _last_mood
             _clear_cache_locked()
+        if state == "wifi" and mood:
+            _aplicar_mood_wifi(mood)
+            return
         if state:
             set_state(state, speech_level=level)
         return
@@ -256,6 +272,8 @@ def set_state(state_value: str, speech_level: float | None = None) -> bool:
     if accepted:
         with _lock:
             _sent += 1
+        if state_value == "idle":
+            _aplica_pendente_wifi()          # reação Wi-Fi guardada no meio de outra coisa
         return True
 
     # Olhos parados/não responderam: desfaz o cache para re-tentar na
@@ -265,6 +283,82 @@ def set_state(state_value: str, speech_level: float | None = None) -> bool:
         _last_state, _last_mood, _last_speaking, _last_speech_level = previous
     _maybe_launch()
     return False
+
+
+def set_wifi_face(estado: str, forcar: bool = False) -> str | None:
+    """Reage nos olhos ao estado Wi-Fi do Mini Deck.
+
+    Estados (``WIFI_FACES``): portal -> surprised, connecting -> thinking,
+    connected -> happy, failed -> error.
+
+    Se a ARIS estiver ocupada (falando/pensando/ouvindo), a reação fica
+    ``pendente`` e é aplicada quando ela voltar ao idle — exceto com
+    ``forcar=True`` (erro de Wi-Fi assume a expressão na hora, mas sem
+    interromper uma fala em andamento).
+
+    Returns:
+        "aplicado"  — rosto ocioso, reação aplicada na hora (o chamador
+                      pode falar um aviso por cima, se quiser);
+        "pendente"  — guardada até a ARIS voltar ao idle;
+        "forçado"   — assumiu com a ARIS ocupada (não falar por cima);
+        None        — estado desconhecido, ponte desligada ou olhos parados.
+        Nunca lança exceção.
+    """
+    global _wifi_pendente
+    if not _enabled():
+        return None
+    mood = WIFI_FACES.get(estado)
+    if mood is None:
+        return None
+    with _lock:
+        ocioso = _last_state in _ESTADOS_OCIOSOS
+        if not ocioso and not forcar:
+            _wifi_pendente = mood
+            return "pendente"
+    if not _aplicar_mood_wifi(mood):
+        return None                       # olhos parados/não responderam
+    return "aplicado" if ocioso else "forçado"
+
+
+def _aplicar_mood_wifi(mood: str) -> bool:
+    """Aplica um mood de Wi-Fi direto nos olhos (estado sintético ``wifi``)."""
+    global _last_state, _last_mood, _last_speaking, _last_speech_level, _sent, _failed
+    with _lock:
+        if _last_state == "wifi" and _last_mood == mood:
+            return True                   # já está nessa expressão
+        previous = (_last_state, _last_mood, _last_speaking, _last_speech_level)
+        _last_state = "wifi"
+        _last_mood = mood
+        _last_speaking = False
+        _last_speech_level = None
+
+    try:
+        response = _client_send(f"state {mood}")
+        accepted = response is not None and not response.startswith("erro")
+    except Exception:
+        accepted = False
+
+    if accepted:
+        with _lock:
+            _sent += 1
+        return True
+
+    # Olhos parados: desfaz o cache para re-tentar depois.
+    with _lock:
+        _failed += 1
+        _last_state, _last_mood, _last_speaking, _last_speech_level = previous
+    _maybe_launch()
+    return False
+
+
+def _aplica_pendente_wifi() -> None:
+    """Aplica a reação de Wi-Fi guardada quando a ARIS volta ao idle."""
+    global _wifi_pendente
+    with _lock:
+        pendente = _wifi_pendente
+        _wifi_pendente = None
+    if pendente:
+        _aplicar_mood_wifi(pendente)
 
 
 def refresh_idle_mood() -> str:
@@ -322,7 +416,7 @@ def stats() -> dict:
 def reset_for_tests() -> None:
     """Zera todo o estado da ponte (usado apenas em testes)."""
     global _last_state, _last_mood, _last_speaking, _last_speech_level
-    global _idle_mood, _launched, _sent, _failed
+    global _idle_mood, _launched, _sent, _failed, _wifi_pendente
     with _lock:
         _last_state = None
         _last_mood = None
@@ -332,3 +426,4 @@ def reset_for_tests() -> None:
         _launched = False
         _sent = 0
         _failed = 0
+        _wifi_pendente = None

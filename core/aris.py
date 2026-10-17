@@ -787,6 +787,9 @@ class Aris:
             self._hardware.register_button_action("config_action", self._on_button_config)
             self._hardware.register_button_action("reconnect", self._on_button_reconnect)
 
+            # Deck Wi-Fi: o rosto reage ao portal/conexão (utils/eyes_bridge)
+            self._hardware.register_event_listener(self._on_deck_event)
+
             # Estado inicial (sem logs falsos se hardware indisponível)
             self._hardware.set_state(SystemState.IDLE)
             self._neural.state.update_hardware(
@@ -1330,6 +1333,36 @@ class Aris:
         time.sleep(1)
         result = self._hardware.start()
         print(f"  {result}")
+
+    def _on_deck_event(self, event: str, data: dict) -> None:
+        """Evento do Mini Deck (Wi-Fi): reação no rosto + aviso falado.
+
+        Estados do deck (wifi_status): portal → surprised, connecting →
+        thinking, connected → happy, failed → error (WIFI_FACES em
+        utils/eyes_bridge). Se a ARIS estiver ocupada, a reação fica
+        pendente e o aviso falado é suprimido (nada de falar por cima).
+        """
+        if event != "wifi_status":
+            return
+        estado = str(data.get("estado", ""))
+        resultado = eyes_bridge.set_wifi_face(estado, forcar=(estado == "failed"))
+        if resultado != "aplicado" or estado not in ("connected", "failed"):
+            return                      # pendente/forçado/inválido: sem fala
+        if os.getenv("ARIS_WIFI_FALA", "1").strip().lower() in ("0", "false", "no", "off"):
+            return
+        texto = (
+            "Wi-Fi conectado."
+            if estado == "connected"
+            else "Não consegui me conectar ao Wi-Fi."
+        )
+        try:
+            self._is_speaking = True
+            voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
+            voice.speak(texto)
+        except Exception as e:
+            self._logger.debug(f"Deck Wi-Fi: aviso falado falhou ({e})")
+        finally:
+            self._is_speaking = False
 
     # ── Voice callbacks ──────────────────────────────────────
 

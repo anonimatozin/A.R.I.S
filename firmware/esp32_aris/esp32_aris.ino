@@ -1,17 +1,25 @@
 /*
- * A.R.I.S. ESP32 Firmware
- * 
- * Comunicação WebSocket com o PC.
+ * A.R.I.S. ESP32 Firmware (Mini Deck)
+ *
+ * Comunicação WebSocket com o PC + portal de configuração Wi-Fi.
  * Controla 2 LEDs RGB + 1 botão com debounce.
- * 
+ *
  * Hardware:
  *   LED Esquerdo: R=13, G=12, B=14
  *   LED Direito:  R=27, G=26, B=33
  *   Botão:        GPIO 32
- * 
+ *
+ * Wi-Fi (wifi_manager.h):
+ *   Sem rede salva -> ponto de acesso "ARIS-Deck-XXXX" e portal de
+ *   configuração em http://192.168.4.1. Credenciais no NVS (nunca em
+ *   log/Serial/JSON). Botão segurado 10 s limpa o Wi-Fi. O PC é
+ *   descoberto por beacon UDP broadcast (porta 8767).
+ *
  * Protocolo JSON:
  *   PC → ESP32: {"tipo":"led","target":"left","r":255,"g":0,"b":0,"brightness":100}
  *   ESP32 → PC: {"tipo":"button","action":"single_click"}
+ *   ESP32 → PC: {"tipo":"wifi_status","estado":"portal|connecting|connected|failed",
+ *                "ip":"...","rssi":-60,"tentativa":1}
  */
 
 #include <WiFi.h>
@@ -23,6 +31,9 @@
 // para `credentials.h` e preencha com seus dados (ver .gitignore).
 #include "credentials.h"
 const int WS_PORT = 8766;
+
+// Wi-Fi: portal de configuração, NVS e beacon UDP (ver wifi_manager.h)
+#include "wifi_manager.h"
 
 // ── Pinos GPIO ─────────────────────────────────────────────
 // LED Esquerdo
@@ -297,6 +308,37 @@ void handleEffectCommand(JsonDocument& doc) {
   startEffect(efeito);
 }
 
+// ── Wi-Fi / WebSocket ──────────────────────────────────────
+
+// Protótipo explícito: iniciarWebSocket é definida antes do handler.
+void handleWebSocketEvent(WStype_t type, uint8_t* payload, size_t length);
+
+void iniciarWebSocket(const String& ip) {
+  if (ip.length() == 0) {
+    Serial.println("[ESP32] WebSocket: IP do PC desconhecido (o beacon UDP o descobre)");
+    return;
+  }
+  Serial.print("[ESP32] WebSocket → ws://");
+  Serial.print(ip);
+  Serial.print(":");
+  Serial.println(WS_PORT);
+  webSocket.begin(ip.c_str(), WS_PORT, "/");
+  webSocket.onEvent(handleWebSocketEvent);
+  webSocket.setReconnectInterval(RECONNECT_MS);
+}
+
+void enviarWifiStatus(const char* estado) {
+  StaticJsonDocument<192> doc;
+  doc["estado"] = estado;             // portal|connecting|connected|failed
+  doc["ip"] = WiFi.localIP().toString();
+  doc["rssi"] = (wifiModo == CONECTADO) ? WiFi.RSSI() : 0;
+  doc["tentativa"] = tentativas;
+  if (ultimoErro.length() > 0) {
+    doc["erro"] = ultimoErro;
+  }
+  sendJSON("wifi_status", doc);       // NUNCA inclui a senha
+}
+
 void handleWebSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
@@ -309,6 +351,7 @@ void handleWebSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
       lastServerHeartbeat = millis();
       Serial.println("[ESP32] Conectado ao servidor");
       sendConnected();
+      enviarWifiStatus(wifiNomeEstado());  // sincroniza o rosto na hora
       break;
       
     case WStype_TEXT: {
@@ -363,44 +406,24 @@ void setup() {
   // LEDs de inicialização
   setBothLEDs(0, 0, 255, 50);  // Azul fraco = iniciando
   
-  // Conectar WiFi
-  Serial.print("[ESP32] Conectando ao WiFi...");
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println();
-    Serial.print("[ESP32] WiFi conectado: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println();
-    Serial.println("[ESP32] Falha ao conectar WiFi");
-    setBothLEDs(255, 0, 0, 50);  // Vermelho = erro
-    return;
-  }
-  
-  // Configurar WebSocket
-  webSocket.begin(WS_HOST, WS_PORT, "/");
-  webSocket.onEvent(handleWebSocketEvent);
-  webSocket.setReconnectInterval(5000);
-  
-  // Estado idle
-  setBothLEDs(0, 50, 100, 80);  // Azul escuro = idle
-  
-  Serial.println("[ESP32] Pronto para conexão WebSocket");
+  // Wi-Fi + WebSocket: portal de configuração se não houver rede salva.
+  // A FSM (portal/conectando/conectado/dormindo) roda em wifiLoop() —
+  // nada aqui bloqueia e falha NÃO apaga as credenciais salvas.
+  wifiSetup();
 }
 
 // ── Loop ───────────────────────────────────────────────────
 
 void loop() {
+  ButtonAction action = readButton();
+
+  // FSM do Wi-Fi (portal/conectando/conectado/dormindo) + beacon UDP
+  wifiLoop();
+  // Reset de Wi-Fi: botão segurado 10 s (ver wifi_manager.h)
+  wifiChecaReset(button.pressed, button.pressStart);
+
   webSocket.loop();
-  
+
   // Heartbeat
   unsigned long now = millis();
   if (now - lastHeartbeat >= HEARTBEAT_MS) {
@@ -409,30 +432,29 @@ void loop() {
       sendHeartbeat();
     }
   }
-  
+
   // Verificar timeout do servidor
   if (connected && (now - lastServerHeartbeat > 15000)) {
     Serial.println("[ESP32] Timeout do servidor");
     connected = false;
     setBothLEDs(255, 0, 0, 50);  // Vermelho = desconectado
   }
-  
-  // Reconexão automática
-  if (!connected && WiFi.status() == WL_CONNECTED) {
+
+  // Reconexão automática ao servidor (o beacon pode trazer novo IP do PC)
+  if (!connected && wifiModo == CONECTADO && pcIp.length() > 0) {
     if (now - lastReconnect >= RECONNECT_MS) {
       lastReconnect = now;
       Serial.println("[ESP32] Tentando reconectar ao servidor...");
-      webSocket.begin(WS_HOST, WS_PORT, "/");
+      iniciarWebSocket(pcIp);
     }
   }
-  
-  // Ler botão
-  ButtonAction action = readButton();
+
+  // Ler botão (ações curtas continuam indo para o PC)
   if (action != NONE) {
     Serial.print("[ESP32] Botão: ");
     Serial.println(actionToString(action));
     sendButton(action);
-    
+
     // Flash visual ao pressionar
     if (!effectState) {
       setBothLEDs(255, 255, 255, 50);
@@ -440,7 +462,7 @@ void loop() {
       setBothLEDs(leftLED.r, leftLED.g, leftLED.b, leftLED.brightness);
     }
   }
-  
+
   // Atualizar efeitos
   updateEffect();
 }

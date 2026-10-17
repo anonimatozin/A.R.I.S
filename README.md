@@ -92,6 +92,30 @@ cp .env.example .env
 | `ARIS_MAX_LOG_SIZE_MB`  | Tamanho máximo do log (MB)         | `10`     |
 | `ARIS_PROMPT`           | Texto do prompt de entrada         | `> `     |
 
+### Mini Deck (ESP32) — Wi-Fi por portal
+
+O deck tem portal de configuração: sem rede salva, ele cria o ponto de
+acesso `ARIS-Deck-XXXX` e serve a página `http://192.168.4.1` (SSID +
+senha). As credenciais ficam no NVS do deck (nunca em log/Serial/JSON),
+falha de conexão **não** as apaga e o botão segurado 10 s é o único jeito
+de limpar. Detalhes, LEDs, flashing e recuperação:
+[`firmware/esp32_aris/README.md`](firmware/esp32_aris/README.md).
+
+O PC descobre o deck por **beacon UDP** (porta 8767) e recebe
+`wifi_status` no WebSocket (porta 8766); o rosto reage em tempo real:
+configurando (surprised) → conectando (thinking) → conectado (happy) →
+erro (error). Com a ARIS ociosa ela também avisa por voz
+(`ARIS_WIFI_FALA=0` desliga o aviso).
+
+| Variável                | Descrição                                    | Padrão   |
+|-------------------------|----------------------------------------------|----------|
+| `ESP32_ENABLED`         | Liga o HardwareManager (server + beacon)     | `true`   |
+| `ESP32_WS_HOST`         | Interface do servidor WebSocket              | `0.0.0.0`|
+| `ESP32_WS_PORT`         | Porta do WebSocket do deck                   | `8766`   |
+| `ESP32_BEACON_PORT`     | Porta do beacon UDP (0 = desliga)            | `8767`   |
+| `ESP32_BEACON_INTERVAL` | Intervalo do beacon (s)                      | `3.0`    |
+| `ARIS_WIFI_FALA`        | Aviso falado ao conectar/falhar (se ociosa)  | `1`      |
+
 ## Arquitetura
 
 O projeto segue uma arquitetura modular com separação clara de responsabilidades:

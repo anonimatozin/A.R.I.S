@@ -12,12 +12,17 @@ from dataclasses import dataclass, field
 class ESP32Config:
     """Configuração do ESP32."""
 
-    # Conexão
+    # Conexão (0.0.0.0 = o deck, de outra máquina, precisa alcançar o server;
+    # o server só fala o protocolo JSON deste módulo)
     enabled: bool = field(default_factory=lambda: os.getenv("ESP32_ENABLED", "true").lower() == "true")
     connection_type: str = field(default_factory=lambda: os.getenv("ESP32_CONNECTION", "websocket"))
-    ws_host: str = field(default_factory=lambda: os.getenv("ESP32_WS_HOST", "127.0.0.1"))
+    ws_host: str = field(default_factory=lambda: os.getenv("ESP32_WS_HOST", "0.0.0.0"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("ESP32_WS_PORT", "8766")))
     esp32_ip: str = field(default_factory=lambda: os.getenv("ESP32_IP", ""))
+
+    # Beacon UDP (o deck descobre o IP deste PC por broadcast; 0 desliga)
+    beacon_port: int = field(default_factory=lambda: int(os.getenv("ESP32_BEACON_PORT", "8767")))
+    beacon_interval: float = field(default_factory=lambda: float(os.getenv("ESP32_BEACON_INTERVAL", "3.0")))
 
     # Heartbeat
     heartbeat_interval: float = field(default_factory=lambda: float(os.getenv("ESP32_HEARTBEAT", "5.0")))

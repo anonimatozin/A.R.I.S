@@ -98,6 +98,27 @@ BUTTON_ACTIONS = {
 }
 
 
+# ── Wi-Fi do Mini Deck ──────────────────────────────────────
+
+ESTADOS_WIFI = frozenset({"portal", "connecting", "connected", "failed"})
+
+
+def parse_wifi_status(data: dict) -> dict:
+    """Normaliza uma mensagem ``wifi_status`` vinda do deck.
+
+    Só estes campos passam adiante (log/listeners/status): se o firmware
+    mandasse algo extra por engano — ex.: uma senha — ele não sairia daqui.
+    """
+    return {
+        "estado": str(data.get("estado", "")).lower(),
+        "ip": str(data.get("ip", "")),
+        "rssi": data.get("rssi"),
+        "tentativa": data.get("tentativa"),
+        "erro": str(data.get("erro", ""))[:120],
+        "recebido_em": time.time(),
+    }
+
+
 # ── Hardware Manager ────────────────────────────────────────
 
 class HardwareManager:
@@ -123,6 +144,13 @@ class HardwareManager:
 
         # Callbacks para ações do botão
         self._button_callbacks: dict[str, Callable] = {}
+
+        # Listeners de eventos do deck (ex.: wifi_status do Mini Deck)
+        self._event_listeners: list[Callable[[str, dict], None]] = []
+        self._wifi_status: dict | None = None
+
+        # Beacon UDP: o deck descobre o IP deste PC por broadcast
+        self._beacon_thread: threading.Thread | None = None
 
         # Estado dos LEDs
         self._left_color = LEDColor()
@@ -172,6 +200,13 @@ class HardwareManager:
             self._server_thread = threading.Thread(target=self._run_server, daemon=True)
             self._server_thread.start()
             self._log(f"WebSocket server iniciando em ws://{self._config.ws_host}:{self._config.ws_port}")
+            if self._config.beacon_port > 0:
+                self._beacon_thread = threading.Thread(target=self._run_beacon, daemon=True)
+                self._beacon_thread.start()
+                self._log(
+                    f"Beacon UDP a cada {self._config.beacon_interval:.1f}s "
+                    f"na porta {self._config.beacon_port} (deck acha o PC)"
+                )
             return f"ESP32 server iniciando em porta {self._config.ws_port}"
         except ImportError:
             self._available = False
@@ -219,6 +254,42 @@ class HardwareManager:
             asyncio.run(main())
         except Exception as e:
             self._log(f"Server error: {e}")
+
+    # ── Beacon UDP ───────────────────────────────────────────
+
+    @staticmethod
+    def _beacon_payload(ws_port: int) -> dict:
+        """Payload do beacon UDP (o deck usa para achar este PC)."""
+        return {"beacon": "aris", "ws_port": ws_port}
+
+    def _run_beacon(self) -> None:
+        """Broadcast UDP periódico: o deck descobre o IP deste PC com ele.
+
+        Funciona tanto na rede da casa quanto no AP do deck (modo portal),
+        porque o broadcast alcança as duas interfaces conforme o link.
+        """
+        import socket
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except OSError as e:
+            self._log(f"Beacon UDP indisponível: {e}")
+            return
+
+        payload = json.dumps(self._beacon_payload(self._config.ws_port)).encode()
+        destino = ("255.255.255.255", self._config.beacon_port)
+        erro_logado = False
+        while self._running:
+            try:
+                sock.sendto(payload, destino)
+                erro_logado = False
+            except OSError as e:
+                if not erro_logado:
+                    self._log(f"Beacon UDP falhou ({e}) — o deck não acharia o PC sozinho")
+                    erro_logado = True
+            time.sleep(self._config.beacon_interval)
+        sock.close()
 
     # ── Comunicação ─────────────────────────────────────────
 
@@ -292,6 +363,13 @@ class HardwareManager:
             self._connected = True
             self._last_heartbeat = time.time()
             self._log("ESP32 confirmou conexão")
+
+        elif msg_type == "wifi_status":
+            info = parse_wifi_status(data)
+            self._wifi_status = info
+            extra = f" ip={info['ip']}" if info["ip"] else ""
+            self._log(f"WiFi do deck: {info['estado']}{extra}")
+            self._notify_event("wifi_status", info)
 
         elif msg_type == "error":
             self._log(f"ESP32 erro: {data.get('message', 'desconhecido')}")
@@ -410,6 +488,18 @@ class HardwareManager:
         else:
             self._log(f"Ação '{action_name}' não registrada")
 
+    def register_event_listener(self, callback: Callable[[str, dict], None]) -> None:
+        """Registra callback de eventos do deck (ex.: wifi_status)."""
+        self._event_listeners.append(callback)
+
+    def _notify_event(self, event: str, data: dict) -> None:
+        """Despacha um evento do deck para os listeners (thread própria)."""
+        for callback in list(self._event_listeners):
+            try:
+                threading.Thread(target=callback, args=(event, data), daemon=True).start()
+            except Exception as e:
+                self._log(f"Erro ao notificar evento '{event}': {e}")
+
     # ── Heartbeat ───────────────────────────────────────────
 
     def _heartbeat_loop(self) -> None:
@@ -475,6 +565,7 @@ class HardwareManager:
             "right_led": {"r": self._right_color.r, "g": self._right_color.g, "b": self._right_color.b},
             "stats": self._stats.copy(),
             "last_heartbeat": self._last_heartbeat,
+            "wifi": dict(self._wifi_status) if self._wifi_status else None,
             "ws_url": f"ws://{self._config.ws_host}:{self._config.ws_port}",
         }
 
@@ -483,12 +574,18 @@ class HardwareManager:
         status = self.get_status()
         conn = "ONLINE" if status["connected"] else "OFFLINE"
         sim = " (SIM)" if status["simulation"] else ""
+        wifi = status.get("wifi")
+        if wifi:
+            wifi_txt = wifi["estado"] + (f" ({wifi['ip']})" if wifi.get("ip") else "")
+        else:
+            wifi_txt = "nunca visto"
 
         lines = [
             f"Hardware Manager{sim}",
             f"   Status: {conn}",
             f"   Estado: {status['state']}",
             f"   WS: {status['ws_url']}",
+            f"   WiFi deck: {wifi_txt}",
             f"   LED Left:  RGB({status['left_led']['r']},{status['left_led']['g']},{status['left_led']['b']})",
             f"   LED Right: RGB({status['right_led']['r']},{status['right_led']['g']},{status['right_led']['b']})",
             f"   Msgs: down={status['stats']['messages_received']} up={status['stats']['messages_sent']}",

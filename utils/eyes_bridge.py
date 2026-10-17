@@ -26,13 +26,13 @@ Garantias — a ponte NUNCA atrapalha a ARIS:
 - deduplicação: estado repetido não é reenviado; se o envio falhar, o
   cache é desfeito para tentar de novo na próxima sincronização;
 - kill-switch: ``ARIS_EYES=0`` desliga a ponte inteira;
-- autolaunch opcional: ``ARIS_EYES_AUTOLAUNCH=1`` sobe os olhos
-  (``--mini``) na primeira sincronização e reenvia o estado quando eles
-  respondem ao ping.
+- autolaunch: por PADRÃO a ponte sobe os olhos sozinha (``--mini``) no
+  primeiro uso e reenvia o estado quando eles respondem ao ping;
+  ``ARIS_EYES_AUTOLAUNCH=0`` desliga (aí os olhos são manuais).
 
 Variáveis de ambiente:
     ARIS_EYES=0                 desliga a ponte
-    ARIS_EYES_AUTOLAUNCH=1      sobe o aris-eyes.sh --mini se não rodar
+    ARIS_EYES_AUTOLAUNCH=0      não sobe os olhos automaticamente
     ARIS_EYES_SPEECH_LEVEL=0.6  volume da fala (0..1) ao entrar em speaking
     ARIS_EYES_IDLE_MOOD=neutral força o mood ocioso (ignora personalidade)
 """
@@ -147,33 +147,34 @@ def _resolve_idle_mood() -> str:
     return _idle_mood
 
 
+def autolaunch_enabled() -> bool:
+    """True se a ponte pode subir os olhos sozinha (padrão: sim)."""
+    return os.getenv("ARIS_EYES_AUTOLAUNCH", "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
 def _maybe_launch() -> None:
-    """Autolaunch opcional: sobe os olhos uma vez (ARIS_EYES_AUTOLAUNCH=1)."""
+    """Autolaunch: sobe os olhos UMA vez (padrão; ARIS_EYES_AUTOLAUNCH=0 desliga).
+
+    Usa o mesmo interpretador da ARIS (``sys.executable``), que é o venv com
+    PySide6 instalado — o ``aris-eyes.sh`` cairia no python3 do sistema.
+    """
     global _launched
-    if os.getenv("ARIS_EYES_AUTOLAUNCH", "0").strip().lower() not in ("1", "true", "yes", "on"):
+    if not autolaunch_enabled():
         return
     with _lock:
         if _launched:
             return
         _launched = True
-    script = _EYES_DIR / "aris-eyes.sh"
     try:
-        if script.exists():
-            subprocess.Popen(
-                [str(script), "--mini"],
-                cwd=str(_EYES_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        else:
-            subprocess.Popen(
-                [sys.executable, "-m", "aris_eyes", "--mini"],
-                cwd=str(_EYES_DIR),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+        subprocess.Popen(
+            [sys.executable, "-m", "aris_eyes", "--mini"],
+            cwd=str(_EYES_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     except Exception:
         return
     threading.Thread(target=_retry_after_launch, daemon=True, name="eyes-retry").start()
@@ -288,6 +289,19 @@ def refresh_idle_mood() -> str:
 def probe(timeout: float = 0.5) -> bool:
     """True se os olhos estão rodando (ping -> pong). Nunca lança."""
     return _client_send("ping", timeout=timeout) == "pong"
+
+
+def ensure_running() -> bool:
+    """True se os olhos já estão no ar; senão tenta subir (autolaunch).
+
+    Chamado no startup da ARIS: garante que a janela dos olhos apareça
+    mesmo antes da primeira mudança de estado. Nunca lança.
+    """
+    if probe():
+        return True
+    if autolaunch_enabled():
+        _maybe_launch()
+    return False
 
 
 def stats() -> dict:

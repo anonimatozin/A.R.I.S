@@ -13,8 +13,10 @@ import asyncio
 import logging
 import os
 import queue
+import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -54,6 +56,7 @@ except ImportError:
 
 from core.neural.events import Event, PRIORITY_NORMAL
 from core.perception.sensor import Sensor, STATUS_DISABLED
+from utils import audio_backend
 from utils.logger import Logger
 
 
@@ -162,7 +165,10 @@ class ContinuousVoiceSensor:
 
     @property
     def available(self) -> bool:
-        return HAS_PYAUDIO and (HAS_FASTER_WHISPER or HAS_VOSK)
+        # Captação: pyaudio OU fallback arecord do backend compartilhado
+        # (utils/audio_backend) — neste ambiente o pyaudio está quebrado
+        # (sem módulo C), e o arecord comprovou capturar sinal real.
+        return audio_backend.HAS_CAPTURE and (HAS_FASTER_WHISPER or HAS_VOSK)
 
     @property
     def enabled(self) -> bool:
@@ -310,10 +316,12 @@ class ContinuousVoiceSensor:
         self._logger.debug(f"STT loop iniciado (silence_limit={silence_limit}, min_speech={min_speech_frames}, warmup={warmup_frames})")
         self._logger.info(f"Voz contínua ativa — escutando por wake words: {self._wake_words}")
 
+        idle_rounds = 0  # rounds vazios do queue.get (0.1s cada) p/ heartbeat
         while self._running and not self._stop_event.is_set():
             try:
                 # Aguardar frame de áudio
                 frame = self._audio_queue.get(timeout=0.1)
+                idle_rounds = 0
                 if not frame:  # sinal de parada
                     break
 
@@ -361,11 +369,20 @@ class ContinuousVoiceSensor:
                     # Silêncio
                     if self._in_speech:
                         # Se wake word já foi detectado, exigir silêncio maior p/ finalizar
-                        # (1.5s em vez de 1.2s para capturar o restante do comando)
+                        # (1.25x em vez de 1.0 para capturar o restante do comando).
+                        # ATENÇÃO: a config é em MS e a contagem é em FRAMES —
+                        # antes o valor em ms (1200) era comparado contra a
+                        # contagem de frames e a utterância só fechava após 36s
+                        # de silêncio (bug real: frases do usuário eram engolidas
+                        # por buffers gigantes e a wake word nunca processava).
                         effective_silence_limit = (
-                            self._config.silence_timeout_ms
+                            silence_limit
                             if not self._wake_word_in_speech
-                            else int(self._config.silence_timeout_ms * 1.25)
+                            else max(
+                                1,
+                                int(self._config.silence_timeout_ms * 1.25)
+                                // self._config.frame_duration_ms,
+                            )
                         )
                         self._silence_frames += 1
                         self._speech_buffer.append(frame)  # manter silêncio final
@@ -389,21 +406,96 @@ class ContinuousVoiceSensor:
                                 self._publish_aris_status("idle")
 
             except queue.Empty:
+                # Heartbeat de saúde: se o loop para de receber frames
+                # (mic morto/queue congelada), fica diagnosticável no log.
+                idle_rounds += 1
+                if idle_rounds >= 100:  # ~10s sem frame algum
+                    idle_rounds = 0
+                    if self._running:
+                        self._logger.debug(
+                            "STT loop sem frames há ~10s "
+                            f"(queue={self._audio_queue.qsize()})"
+                        )
                 continue
             except Exception as e:
                 if self._running:
                     self._logger.debug(f"Erro no STT loop: {e}")
 
     def _is_speech(self, frame: bytes) -> bool:
-        """VAD via webrtcvad."""
+        """Gate de energia (config.energy_threshold) + VAD webrtcvad.
+
+        Bug real corrigido aqui: o webrtcvad sozinho flickerava ~1
+        frame/s de "fala" no chiado do mic analógico (RMS ~472, medido),
+        e um frame falso a cada <1,2s zera o contador de silêncio — a
+        utterância ficava PRESA até o limite de 30s (112s de buffer /
+        3,5 MB medidos em execução real) e engolia as frases do usuário:
+        a wake word nunca era processada. O gate de energia rejeita
+        100% dos frames de ambiente (0% passam de 750 RMS) e mantém
+        ~61% dos frames de voz reais.
+        """
+        if HAS_NUMPY:
+            audio = np.frombuffer(frame, dtype=np.int16)
+            energy = float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
+            if energy <= self._config.energy_threshold:
+                return False
         if not self._vad or len(frame) != self._bytes_per_frame:
-            # Fallback simples: energia RMS
-            if HAS_NUMPY:
-                audio = np.frombuffer(frame, dtype=np.int16)
-                energy = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
-                return energy > self._config.energy_threshold
-            return True  # assume fala se não tem VAD
+            # Sem VAD (ou frame fora do esperado): o gate de energia acima
+            # já decidiu; sem numpy, assume fala como antes.
+            return True
         return self._vad.is_speech(frame, self._config.sample_rate)
+
+    @staticmethod
+    def _normalize_for_wake(text: str) -> str:
+        """Minúsculas e sem acentos ('arís' ≈ 'aris' na comparação)."""
+        lowered = text.lower()
+        return "".join(
+            c for c in unicodedata.normalize("NFD", lowered)
+            if unicodedata.category(c) != "Mn"
+        )
+
+    @staticmethod
+    def _levenshtein(a: str, b: str, max_dist: int = 1) -> int:
+        """Distância de edição com parada precoce (só interessa ≤ max_dist)."""
+        if abs(len(a) - len(b)) > max_dist:
+            return max_dist + 1
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, 1):
+            curr = [i]
+            row_min = i
+            for j, cb in enumerate(b, 1):
+                val = min(
+                    prev[j] + 1,               # deleção
+                    curr[j - 1] + 1,           # inserção
+                    prev[j - 1] + (ca != cb),  # substituição
+                )
+                curr.append(val)
+                if val < row_min:
+                    row_min = val
+            if row_min > max_dist:
+                return max_dist + 1
+            prev = curr
+        return prev[-1]
+
+    def _match_wake_word(self, transcript: str) -> bool:
+        """Wake word: substring (comportamento original) + fuzzy ≤1 edição.
+
+        Bug real medido em execução ao vivo (12:50): o whisper tiny
+        ouviu o próprio nome do usuário como "Ares" (não "Aris") e a
+        lista fixa não casava — o comando era descartado em silêncio.
+        O fuzzy palavra-a-palavra (distância de edição ≤1, palavras
+        ≥4 letras) cobre transcrições fonéticas próximas sem disparar
+        em termos curtos ("bares"/"claridade" continuam fora).
+        """
+        text = self._normalize_for_wake(transcript)
+        wakes = tuple(self._normalize_for_wake(w) for w in self._wake_words)
+        if any(w in text for w in wakes):
+            return True
+        tokens = [t for t in re.findall(r"[a-z0-9]+", text) if len(t) >= 4]
+        for token in tokens:
+            for wake in wakes:
+                if len(wake) >= 4 and self._levenshtein(token, wake, 1) <= 1:
+                    return True
+        return False
 
     def _process_speech_buffer(self) -> bool:
         """Processa buffer de fala acumulado via STT.
@@ -422,7 +514,7 @@ class ContinuousVoiceSensor:
 
         # Verificar wake word ANTES de emitir - para poder continuar ouvindo
         transcript = self._transcribe(audio_data) or ""
-        woke_up = any(wake in transcript.lower() for wake in self._wake_words)
+        woke_up = self._match_wake_word(transcript)
 
         delivered = False
         try:

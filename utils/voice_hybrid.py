@@ -283,13 +283,40 @@ class HybridVoice:
 
     @staticmethod
     def _find_piper() -> str | None:
-        """Localiza o binário ou módulo do piper."""
+        """Localiza o binário do piper (PATH ou junto do interpretador)."""
         import shutil
+        import sys
+        from pathlib import Path
 
         exe = shutil.which("piper") or shutil.which("piper-tts")
         if exe:
             return exe
+        # venv do projeto: o binário está em <venv>/bin mas o PATH do
+        # processo (ARIS roda sem ativar o venv) pode não incluí-lo.
+        candidate = Path(sys.executable).with_name("piper")
+        if candidate.exists():
+            return str(candidate)
         return None
+
+    @staticmethod
+    def _default_piper_voice() -> str:
+        """Modelo do piper já baixado (voz feminina pt-BR), se existir.
+
+        Procura em ~/.local/share/piper/voices e em <projeto>/voices.
+        Sem modelo → "" (o piper sem --model falha e caímos no espeak).
+        """
+        from pathlib import Path
+
+        home = Path.home()
+        project = Path(__file__).resolve().parent.parent
+        for directory in (
+            home / ".local" / "share" / "piper" / "voices",
+            project / "voices",
+        ):
+            model = directory / "pt_BR-faber-medium.onnx"
+            if model.exists():
+                return str(model)
+        return ""
 
     def _speak_piper(self, text: str) -> bool:
         """Tenta falar com piper TTS (offline, pt-BR). True se reproduziu."""
@@ -299,7 +326,7 @@ class HybridVoice:
         import subprocess
 
         tmp_wav = os.path.join(tempfile.gettempdir(), f"aris_piper_{uuid.uuid4().hex}.wav")
-        voice = os.getenv("ARIS_PIPER_VOICE", "")
+        voice = os.getenv("ARIS_PIPER_VOICE", "") or self._default_piper_voice()
         try:
             cmd = [exe, "--output_file", tmp_wav]
             if voice:
@@ -321,7 +348,7 @@ class HybridVoice:
                 pass
 
     def _speak_espeak(self, text: str) -> bool:
-        """Tenta falar com espeak-ng (offline, pt-BR). True se reproduziu."""
+        """Tenta falar com espeak-ng (offline, voz feminina pt-BR). True se reproduziu."""
         import shutil
         import subprocess
 
@@ -330,9 +357,12 @@ class HybridVoice:
             return False
         tmp_wav = os.path.join(tempfile.gettempdir(), f"aris_espeak_{uuid.uuid4().hex}.wav")
         try:
-            # pt-br: voz em português do Brasil (nunca inglês).
+            # pt-br+f3: variante feminina em português do Brasil (nunca
+            # inglês). O mbrola-br2 (F) consta na lista mas não tem os
+            # dados no sistema. ARIS_ESPEAK_VOICE troca a voz.
+            espeak_voice = os.getenv("ARIS_ESPEAK_VOICE", "pt-br+f3")
             proc = subprocess.run(
-                [exe, "-v", "pt-br", "-w", tmp_wav, text],
+                [exe, "-v", espeak_voice, "-w", tmp_wav, text],
                 capture_output=True, timeout=30,
             )
             if proc.returncode != 0 or not os.path.exists(tmp_wav):

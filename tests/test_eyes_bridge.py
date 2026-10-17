@@ -20,10 +20,13 @@ from utils import eyes_bridge
 @pytest.fixture(autouse=True)
 def _clean_bridge(monkeypatch):
     """Estado zerado + env determinística entre testes."""
-    for key in ("ARIS_EYES", "ARIS_EYES_AUTOLAUNCH", "ARIS_EYES_SPEECH_LEVEL"):
+    for key in ("ARIS_EYES", "ARIS_EYES_SPEECH_LEVEL"):
         monkeypatch.delenv(key, raising=False)
     # Mood ocioso fixo por padrão; testes de personalidade removem isso.
     monkeypatch.setenv("ARIS_EYES_IDLE_MOOD", "neutral")
+    # Autolaunch desligado por padrão nos testes (senão um teste de falha
+    # reais subiria olhos de verdade); testes de autolaunch religam.
+    monkeypatch.setenv("ARIS_EYES_AUTOLAUNCH", "0")
     eyes_bridge.reset_for_tests()
     yield
     eyes_bridge.reset_for_tests()
@@ -205,7 +208,21 @@ class TestSwitches:
         eyes_bridge.set_state("error")
         assert len(pops) == 1              # só UMA tentativa de subir
 
-    def test_no_autolaunch_by_default(self, monkeypatch):
+    def test_autolaunch_on_by_default(self, monkeypatch):
+        # Sem env => padrão liga: primeira falha subiria os olhos.
+        monkeypatch.delenv("ARIS_EYES_AUTOLAUNCH")
+        monkeypatch.setattr(eyes_bridge, "_client_send", lambda *a, **k: None)
+        monkeypatch.setattr(eyes_bridge, "_retry_after_launch", lambda: None)
+        pops = []
+        monkeypatch.setattr(
+            eyes_bridge.subprocess, "Popen",
+            lambda *a, **k: pops.append(a) or type("P", (), {"pid": 1})(),
+        )
+        eyes_bridge.set_state("thinking")
+        assert len(pops) == 1
+
+    def test_autolaunch_disabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("ARIS_EYES_AUTOLAUNCH", "0")
         monkeypatch.setattr(eyes_bridge, "_client_send", lambda *a, **k: None)
         popped = []
         monkeypatch.setattr(
@@ -213,6 +230,36 @@ class TestSwitches:
             lambda *a, **k: popped.append(a),
         )
         eyes_bridge.set_state("thinking")
+        assert popped == []
+
+    def test_ensure_running_true_when_alive(self, monkeypatch):
+        monkeypatch.setattr(
+            eyes_bridge, "_client_send",
+            lambda cmd, timeout=0.5: "pong" if cmd == "ping" else "ok",
+        )
+        assert eyes_bridge.ensure_running() is True
+
+    def test_ensure_running_launches_by_default(self, monkeypatch):
+        monkeypatch.delenv("ARIS_EYES_AUTOLAUNCH")
+        monkeypatch.setattr(eyes_bridge, "_client_send", lambda *a, **k: None)
+        monkeypatch.setattr(eyes_bridge, "_retry_after_launch", lambda: None)
+        pops = []
+        monkeypatch.setattr(
+            eyes_bridge.subprocess, "Popen",
+            lambda *a, **k: pops.append(a) or type("P", (), {"pid": 1})(),
+        )
+        assert eyes_bridge.ensure_running() is False   # ainda fora do ar...
+        assert len(pops) == 1                          # ...mas foi subir
+
+    def test_ensure_running_no_launch_when_disabled(self, monkeypatch):
+        monkeypatch.setenv("ARIS_EYES_AUTOLAUNCH", "0")
+        monkeypatch.setattr(eyes_bridge, "_client_send", lambda *a, **k: None)
+        popped = []
+        monkeypatch.setattr(
+            eyes_bridge.subprocess, "Popen",
+            lambda *a, **k: popped.append(a),
+        )
+        assert eyes_bridge.ensure_running() is False
         assert popped == []
 
 
@@ -267,7 +314,7 @@ class TestCoreHooks:
         # 5 pontos: sync central, wake word, timer/alerta, shutdown, startup
         assert src.count("eyes_bridge.set_state(") >= 4
         assert "eyes_bridge.refresh_idle_mood()" in src
-        assert "eyes_bridge.probe()" in src
+        assert "eyes_bridge.ensure_running()" in src
 
     def test_sync_hardware_state_forwards_speech_level(self):
         from pathlib import Path

@@ -10,6 +10,7 @@ import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -108,6 +109,13 @@ class Aris:
         # Fila de entrada assíncrona — producers externos podem enfileirar
         # mensagens via send_message(); o loop principal consome com get_input().
         self._input_queue: queue.Queue[str] = queue.Queue()
+
+        # Leitora do terminal em thread: o ``input()`` bloqueante impedia o
+        # loop principal de drenar a fila de VOZ (wake word) — o comando
+        # só era processado quando o usuário apertava Enter (bug real
+        # medido: resposta 98s depois no teste ao vivo).
+        self._terminal_queue: queue.Queue[str] = queue.Queue()
+        self._terminal_reader: threading.Thread | None = None
 
         self._voice = Voice(
             rate=self._settings.VOICE_RATE,
@@ -511,7 +519,7 @@ class Aris:
         self._input_queue.put((text, origin or MessageOrigin()))
 
     def _get_input(self, mic_mode: bool = False) -> tuple[str, MessageOrigin]:
-        """Obtem proxima entrada: fila assincrona primeiro, depois blocking input.
+        """Obtem proxima entrada: fila assincrona primeiro, depois terminal.
 
         Retorna (text, origin) — text vazio se nada disponivel.
         """
@@ -524,7 +532,7 @@ class Aris:
         except queue.Empty:
             pass
 
-        # 2. Input do usuario (bloqueante)
+        # 2. Input do usuario
         if mic_mode:
             if self._hybrid_voice._recognizer is None:
                 return "", MessageOrigin()
@@ -534,13 +542,48 @@ class Aris:
                 ArisUI.show_user_input(result)
             return result, MessageOrigin(source="voice", channel="mic", user_id="local")
         else:
-            text = ArisUI.input_modern(
-                version=self._settings.VERSION,
-                provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
-                mem_count=self._memory.get_stats().get("total_memories", 0),
-                task_count=self._scheduler.get_pending_count(),
-            )
+            # Terminal via leitora em thread (NAO bloqueia o loop): o
+            # ``input()`` puro travava o loop principal e comandos de voz
+            # (wake word) ficavam na fila até o Enter do usuário (bug
+            # real: resposta 98s depois no teste ao vivo). Timeout curto
+            # = voz respondida em ≤300ms; o texto digitado segue fluindo.
+            self._ensure_terminal_reader()
+            try:
+                text = self._terminal_queue.get(timeout=0.3)
+            except queue.Empty:
+                return "", MessageOrigin()
             return text, MessageOrigin(source="terminal", channel="stdin", user_id="local")
+
+    def _ensure_terminal_reader(self) -> None:
+        """Sobe (uma unica vez) a thread leitora do terminal."""
+        if self._terminal_reader is not None:
+            return
+        self._terminal_reader = threading.Thread(
+            target=self._terminal_read_loop, daemon=True, name="terminal-input",
+        )
+        self._terminal_reader.start()
+
+    def _terminal_read_loop(self) -> None:
+        """Loop da leitora: consome ``input_modern`` e enfileira o texto.
+
+        EOF (Ctrl+D/pipe fechado) retorna "" — espera 0,5s antes de
+        tentar de novo para nao hot-spinhar prompts (spam infinito no
+        console, medido em execucao real com stdin fechado).
+        """
+        while True:
+            try:
+                text = ArisUI.input_modern(
+                    version=self._settings.VERSION,
+                    provider=self._llm_router.provider_names[0] if self._llm_router.provider_names else "local",
+                    mem_count=self._memory.get_stats().get("total_memories", 0),
+                    task_count=self._scheduler.get_pending_count(),
+                )
+            except Exception:
+                text = ""
+            if not text:
+                threading.Event().wait(0.5)
+                continue
+            self._terminal_queue.put(text)
 
     def _setup_signal_handlers(self) -> None:
         """Configura handlers para sinais do sistema."""
@@ -818,13 +861,14 @@ class Aris:
         # Sincronizar personalidade com CLL1 (Edge) e painel web
         self._sync_personality()
 
-        # ARIS Eyes: mood ocioso vem da personalidade; log de uma linha
+        # ARIS Eyes: mood ocioso vem da personalidade; sobe os olhos se preciso
         eyes_bridge.refresh_idle_mood()
-        running = eyes_bridge.probe()
-        self._logger.info(
-            "ARIS Eyes: "
-            + ("conectado" if running else "não rodando (./aris_eyes/aris-eyes.sh --mini)")
-        )
+        if eyes_bridge.ensure_running():
+            self._logger.info("ARIS Eyes: conectado")
+        elif eyes_bridge.autolaunch_enabled():
+            self._logger.info("ARIS Eyes: iniciando olhos automaticamente (modo mini)")
+        else:
+            self._logger.info("ARIS Eyes: não rodando (./aris_eyes/aris-eyes.sh --mini)")
 
         # Exibir banner
         self._print_banner()

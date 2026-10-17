@@ -332,11 +332,12 @@ class TestDiscordBotDM:
             assert not bot.is_authorized(333)
 
     def test_dm_authorized_none_allows_all(self):
+        # Fail-closed (auditoria 2026-09-19): sem allowlist, negar tudo.
         from modules.discord_bot import DiscordBot
         with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "fake", "DISCORD_ALLOWED_USERS": ""}):
             bot = DiscordBot()
             assert bot.allowed_users is None
-            assert bot.is_authorized(99999)
+            assert not bot.is_authorized(99999)
 
     def test_dm_no_channel_id_required(self):
         from modules.discord_bot import DiscordBot
@@ -545,3 +546,126 @@ class TestScenarios:
             bot = DiscordBot()
             assert bot.is_authorized(111)
             assert not bot.is_authorized(222)
+
+
+# ── Regression Tests ─────────────────────────────────────────
+
+class TestModeDetectionRegression:
+    """Teste de regressão: detecção de modo EDGE/PRIMARY com PC ligado."""
+
+    def test_mode_manager_updates_on_heartbeat(self):
+        from core.neural.mode import get_mode_manager, ARISMode
+        mm = get_mode_manager()
+        # Simular heartbeat PC online
+        mm.update_heartbeat(True, reason="test")
+        assert mm.mode == ARISMode.PRIMARY
+        assert mm.pc_online is True
+
+    def test_mode_manager_falls_to_edge_after_failures(self):
+        from core.neural.mode import get_mode_manager, ARISMode
+        mm = get_mode_manager()
+        mm.force_mode(ARISMode.PRIMARY, reason="test")
+        # Simular 3 falhas consecutivas
+        mm.update_heartbeat(False, reason="test")
+        mm.update_heartbeat(False, reason="test")
+        mm.update_heartbeat(False, reason="test")
+        assert mm.mode == ARISMode.EDGE
+        assert mm.pc_online is False
+
+
+class TestSearchRegression:
+    """Teste de regressão: comando de pesquisa retorna resultados reais."""
+
+    def test_edge_chat_search_returns_real_results(self):
+        from edge.edge_chat import EdgeChat
+        from edge.edge_config import EdgeConfig
+        config = EdgeConfig(edge_groq_api_key="fake")
+        chat = EdgeChat(config)
+        chat._has_key = True
+        # NLU detecta SEARCH mas deve retornar None para ir para _try_web_intel
+        from core.nlu import NLUEngine, IntentType
+        nlu = NLUEngine()
+        result = nlu.detect("pesquisa sobre python")
+        assert result.intent == IntentType.SEARCH
+        # _try_nlu deve retornar None para SEARCH (correção da regressão)
+        nlu_result = chat._try_nlu("pesquisa sobre python")
+        assert nlu_result is None, "NLU não deve interceptar SEARCH - deve deixar para web_intel"
+
+    def test_edge_chat_latest_returns_real_results(self):
+        from edge.edge_chat import EdgeChat
+        from edge.edge_config import EdgeConfig
+        config = EdgeConfig(edge_groq_api_key="fake")
+        chat = EdgeChat(config)
+        chat._has_key = True
+        # _try_nlu deve retornar None para LATEST
+        nlu_result = chat._try_nlu("últimas notícias sobre IA")
+        assert nlu_result is None, "NLU não deve interceptar LATEST - deve deixar para web_intel"
+
+
+class TestVersionEndpoint:
+    """Teste de regressão: endpoint /versao retorna commit hash e timestamp."""
+
+    def test_version_info_structure(self):
+        from core.version import get_version_info
+        info = get_version_info()
+        assert "commit" in info
+        assert "deploy_timestamp" in info
+        assert "deploy_iso" in info
+        assert "uptime_seconds" in info
+        assert isinstance(info["commit"], str)
+        assert isinstance(info["deploy_timestamp"], float)
+        assert info["uptime_seconds"] >= 0
+
+    def test_format_version_text(self):
+        from core.version import format_version_text
+        text = format_version_text()
+        assert "Versao:" in text
+        assert "Deploy:" in text
+        assert "Uptime:" in text
+
+
+class TestIntentFragmentationRegression:
+    """Teste de regressão: fragmentação de intenção em texto reflexivo/conversacional."""
+
+    def test_planner_skips_reflexive_text(self):
+        """Planner não deve fragmentar texto reflexivo/conversacional."""
+        from edge.edge_chat import EdgeChat
+        from edge.edge_config import EdgeConfig
+        config = EdgeConfig(edge_groq_api_key="fake")
+        chat = EdgeChat(config)
+        chat._has_key = True
+
+        # Texto reflexivo/conversacional - NÃO deve ser fragmentado pelo planner
+        reflexive_texts = [
+            "amanha e meu aniversario e eu to pensando se eu vou ou nao pra escola",
+            "acho que vou ir pra escola amanha",
+            "sera que vai chover amanha",
+            "amanha e meu aniversario",
+            "to na duvida se vou ou fico",
+            "to achando que nao vou",
+        ]
+
+        for text in reflexive_texts:
+            # _try_planner deve retornar None (não interceptar) para ir para LLM
+            result = chat._try_planner(text)
+            assert result is None, f"Planner interceptou texto reflexivo: {text}"
+
+    def test_planner_still_detects_real_actions(self):
+        """Planner ainda deve detectar ações reais multi-ação."""
+        from edge.edge_chat import EdgeChat
+        from edge.edge_config import EdgeConfig
+        config = EdgeConfig(edge_groq_api_key="fake")
+        chat = EdgeChat(config)
+        chat._has_key = True
+
+        # Ações reais multi-ação - DEVE ser interceptado
+        action_texts = [
+            "abre o chrome e discord",
+            "abre o chrome e depois abre o discord",
+            "desliga o pc as 15 e reinicia as 16",
+        ]
+
+        for text in action_texts:
+            result = chat._try_planner(text)
+            assert result is not None, f"Planner NÃO interceptou ação real: {text}"
+            assert "Entendi! Vou executar:" in result or "1." in result

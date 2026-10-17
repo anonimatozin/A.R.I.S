@@ -1,0 +1,11 @@
+# Parte 2 — Ferramentas do PC (Windows)
+# Já instalado no ambiente do projeto.
+
+psutil>=5.9.0        # processos, CPU, RAM, disco, bateria, uptime (pc_system_info, pc_list_processes, kill da árvore)
+pyautogui>=0.9.54    # teclado/mouse/screenshot/FAILSAFE (pc_screenshot, pc_keys, pc_mouse) — precisa de área gráfica
+pywinauto>=0.6.8     # backend UIA: janelas, clicar, digitar (pc_list_windows, pc_focus_window, pc_ui_*)
+send2trash>=1.8.0    # apagar via Lixeira, nunca esmagação definitiva (pc_delete_file)
+pywin32>=306; sys_platform == "win32"  # win32gui/win32api/win32clipboard (janelas, foco, área de transferência)
+Pillow>=10.0.0       # gravação do PNG (pc_screenshot)
+
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

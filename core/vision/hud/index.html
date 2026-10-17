@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A.R.I.S. HUD</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #06080f;
+            --bg-secondary: #0c1019;
+            --bg-tertiary: #141b27;
+            --bg-card: rgba(12, 16, 25, 0.85);
+            --accent-cyan: #00d4ff;
+            --accent-green: #22d3a7;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --text-primary: #e8edf5;
+            --text-secondary: #8896aa;
+            --text-muted: #4a5568;
+            --border-color: rgba(255, 255, 255, 0.06);
+            --border-active: rgba(0, 212, 255, 0.25);
+            --glow-cyan: rgba(0, 212, 255, 0.35);
+            --glow-green: rgba(34, 211, 167, 0.35);
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Background layers */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px);
+            background-size: 48px 48px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .bg-radar {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 212, 255, 0.06);
+            box-shadow:
+                inset 0 0 200px rgba(0, 212, 255, 0.03),
+                0 0 120px rgba(0, 212, 255, 0.03);
+            pointer-events: none;
+            z-index: 0;
+            animation: pulse-radar 6s ease-in-out infinite;
+        }
+
+        @keyframes pulse-radar {
+            0%, 100% { opacity: 0.2; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 0.4; transform: translate(-50%, -50%) scale(1.015); }
+        }
+
+        /* Scanline overlay */
+        .bg-grid::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.03) 2px,
+                rgba(0, 0, 0, 0.03) 4px
+            );
+            pointer-events: none;
+        }
+
+        .hud-container {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            grid-template-columns: 260px 1fr 260px;
+            grid-template-rows: 1fr;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 18px;
+            backdrop-filter: blur(16px);
+            box-shadow:
+                0 2px 16px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            overflow: hidden;
+        }
+
+        .panel:hover {
+            border-color: var(--border-active);
+            box-shadow:
+                0 4px 24px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05),
+                0 0 30px rgba(0, 212, 255, 0.08);
+        }
+
+        .panel-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: var(--accent-cyan);
+        }
+
+        .panel-title::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            box-shadow: 0 0 8px var(--glow-cyan);
+            animation: blink 2.5s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Status indicator */
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transition: all 0.4s ease;
+            flex-shrink: 0;
+        }
+
+        .status-dot.listening { background: var(--accent-cyan); box-shadow: 0 0 10px var(--glow-cyan); }
+        .status-dot.thinking { background: var(--accent-amber); box-shadow: 0 0 10px rgba(245, 158, 11, 0.4); }
+        .status-dot.speaking { background: var(--accent-green); box-shadow: 0 0 10px var(--glow-green); }
+        .status-dot.executing { background: var(--accent-red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+        .status-dot.idle { background: var(--text-muted); }
+
+        .status-label {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-secondary);
+        }
+
+        /* Metrics grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .metric {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 12px 8px;
+            text-align: center;
+            transition: border-color 0.3s ease;
+        }
+
+        .metric:hover {
+            border-color: rgba(0, 212, 255, 0.15);
+        }
+
+        .metric-value {
+            font-family: var(--font-mono);
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            line-height: 1.2;
+        }
+
+        .metric-label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-top: 4px;
+        }
+
+        /* Mic control */
+        .mic-control {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .mic-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .mic-button.active {
+            background: linear-gradient(135deg, var(--accent-green), #059669);
+            color: var(--bg-primary);
+            box-shadow: 0 0 20px var(--glow-green);
+        }
+
+        .mic-button.inactive {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .mic-button.inactive:hover {
+            background: rgba(239, 68, 68, 0.25);
+            box-shadow: 0 0 16px rgba(239, 68, 68, 0.2);
+        }
+
+        .mic-button.active:hover {
+            transform: scale(1.02);
+            box-shadow: 0 0 24px var(--glow-green);
+        }
+
+        .mic-button:active {
+            transform: scale(0.98);
+        }
+
+        .mic-status {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-align: center;
+            font-family: var(--font-mono);
+        }
+
+        /* Command input */
+        .command-input {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .command-input input {
+            width: 100%;
+            padding: 11px 14px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            transition: all 0.25s ease;
+        }
+
+        .command-input input:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 2px var(--glow-cyan);
+        }
+
+        .command-input input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .cmd-hint {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--text-muted);
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+
+        .cmd-hint kbd {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        /* Log / Events */
+        .event-log {
+            max-height: calc(100vh - 120px);
+            overflow-y: auto;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            line-height: 1.5;
+        }
+
+        .event-log::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .event-log::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .event-log::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+        }
+
+        .event-entry {
+            display: flex;
+            gap: 8px;
+            padding: 5px 8px;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            transition: background 0.15s ease;
+        }
+
+        .event-entry:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .event-time {
+            color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .event-type {
+            color: var(--accent-cyan);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+
+        .event-message {
+            color: var(--text-secondary);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* No gesture commands — direct control only */
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-cyan), #0099cc);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 12px var(--glow-cyan);
+            flex-shrink: 0;
+        }
+
+        /* Face recognition consent */
+        .face-consent-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .face-consent-modal.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .face-consent-content {
+            background: var(--bg-card);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 14px;
+            padding: 32px;
+            max-width: 440px;
+            width: 90%;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7), 0 0 40px rgba(245, 158, 11, 0.1);
+            text-align: center;
+            backdrop-filter: blur(16px);
+        }
+
+        .face-consent-icon {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-amber), #f97316);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            box-shadow: 0 0 24px rgba(245, 158, 11, 0.3);
+        }
+
+        .face-consent-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--text-primary);
+        }
+
+        .face-consent-message {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        .face-preview {
+            width: 110px;
+            height: 110px;
+            border-radius: 10px;
+            border: 2px solid rgba(245, 158, 11, 0.4);
+            margin: 0 auto 20px;
+            object-fit: cover;
+        }
+
+        .consent-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 11px 24px;
+            border: none;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-green), #059669);
+            color: var(--bg-primary);
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 0 20px var(--glow-green);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(239, 68, 68, 0.25);
+            transform: translateY(-1px);
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .hud-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto auto;
+            }
+        }
+
+        /* Hologram */
+        .holo-ring {
+            position: relative;
+            width: 200px;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .holo-ring::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 2px solid rgba(0, 212, 255, 0.4);
+            animation: holo-spin 8s linear infinite;
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.2), inset 0 0 30px rgba(0, 212, 255, 0.1);
+        }
+
+        .holo-ring::after {
+            content: '';
+            position: absolute;
+            inset: 15px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 212, 255, 0.25);
+            animation: holo-spin 6s linear infinite reverse;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.15);
+        }
+
+        .holo-ring-inner {
+            position: absolute;
+            inset: 30px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            animation: holo-spin 4s linear infinite;
+        }
+
+        .holo-core {
+            position: relative;
+            z-index: 1;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.15) 0%, transparent 70%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: holo-pulse 3s ease-in-out infinite;
+        }
+
+        .holo-core svg {
+            filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.6));
+        }
+
+        .holo-label {
+            position: absolute;
+            bottom: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 4px;
+            color: rgba(0, 212, 255, 0.6);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        @keyframes holo-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes holo-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 1; }
+        }
+
+        /* Floating orbs */
+        .holo-orb {
+            position: absolute;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(0, 212, 255, 0.12) 0%, transparent 70%);
+            border: 1px solid rgba(0, 212, 255, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            transform: translate(-50%, -50%);
+            cursor: grab;
+            transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+            z-index: 5;
+        }
+
+        .holo-orb::after {
+            content: attr(data-label);
+            position: absolute;
+            bottom: -16px;
+            font-family: var(--font-mono);
+            font-size: 8px;
+            letter-spacing: 1px;
+            color: rgba(0, 212, 255, 0.5);
+            text-transform: uppercase;
+        }
+
+        .holo-orb span {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--accent-cyan);
+        }
+
+        .holo-orb:hover, .holo-orb.grabbed {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+            transform: translate(-50%, -50%) scale(1.15);
+        }
+
+        .holo-orb.grabbed {
+            border-color: var(--accent-green);
+            box-shadow: 0 0 30px rgba(34, 211, 167, 0.4);
+        }
+
+        /* Hologram draggable */
+        #hologram { transition: filter 0.3s ease; }
+        #hologram.grabbed { filter: drop-shadow(0 0 30px rgba(0, 212, 255, 0.6)); }
+        #hologram.grabbed .holo-ring::before { border-color: var(--accent-green); animation-duration: 2s; }
+
+        /* Hand cursor states */
+        #handCursor.pinching {
+            width: 16px; height: 16px;
+            border-color: var(--accent-green);
+            background: rgba(34, 211, 167, 0.25);
+        }
+
+        /* Chat real (histórico scrollável, fonte: SSE chat_message) */
+        .chat-history {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .chat-history::-webkit-scrollbar { width: 4px; }
+        .chat-history::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        .chat-msg-user { color: var(--accent-green); }
+        .chat-msg-aris { color: var(--accent-cyan); }
+        .chat-msg-time { color: var(--text-muted); font-size: 9px; margin-right: 6px; }
+
+        /* Face bar (ai-visualizer adaptado — crédito: jaredrhod/ai-visualizer) */
+        .face-bar {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            padding: 6px 10px;
+            background: rgba(0,0,0,0.7);
+            border-bottom: 1px solid var(--border-color);
+            font-family: var(--font-mono);
+            font-size: 10px;
+            z-index: 3;
+        }
+        .face-bar button {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            border-radius: 6px;
+            padding: 3px 10px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .face-bar button.active {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        #faceFrame { width: 100%; height: 220px; border: none; background: #02030a; }
+
+        /* Cards manipuláveis (barehands adaptado — crédito: jaredrhod/barehands) */
+        .bh-card {
+            position: absolute;
+            width: 220px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: rgba(12, 16, 25, 0.88);
+            border: 1px solid rgba(0, 212, 255, 0.35);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            cursor: grab;
+            z-index: 6;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            user-select: none;
+        }
+        .bh-card h4 { color: var(--accent-cyan); font-size: 11px; margin-bottom: 6px; letter-spacing: 1px; }
+        .bh-card p { color: var(--text-secondary); font-size: 10px; line-height: 1.5; }
+        .bh-card.grabbed { border-color: var(--accent-green); box-shadow: 0 0 24px rgba(34,211,167,0.4); }
+        .bh-card.presented { outline: 2px solid var(--accent-cyan); }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-radar"></div>
+
+    <div class="hud-container">
+        <!-- Left Panel: Status & Controls -->
+        <div class="panel" style="grid-column: 1 / 2; grid-row: 1 / 4;">
+            <div class="panel-title">Sistema</div>
+            
+            <div class="status-indicator">
+                <div class="status-dot idle" id="statusDot"></div>
+                <span class="status-label" id="statusLabel">AGUARDANDO</span>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric">
+                    <div class="metric-value" id="cpuMetric">--%</div>
+                    <div class="metric-label">CPU</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="ramMetric">--%</div>
+                    <div class="metric-label">RAM</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="uptimeMetric">--:--:--</div>
+                    <div class="metric-label">UPTIME</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="modeMetric">EDGE</div>
+                    <div class="metric-label">MODO</div>
+                </div>
+            </div>
+
+            <div class="mic-control">
+                <button class="mic-button inactive" id="micButton">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="22"></line>
+                        <line x1="8" y1="23" x2="16" y2="23"></line>
+                    </svg>
+                    <span id="micButtonText">MICROFONE MUDO</span>
+                </button>
+                <div class="mic-status" id="micStatus">Clique para ativar</div>
+            </div>
+
+            <div class="mic-control">
+                <button class="mic-button inactive" id="camButton" onclick="toggleCamera()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 7l-7 5 7 5V7z"></path>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                    </svg>
+                    <span id="camButtonText">CAMERA OFF</span>
+                </button>
+                <div class="mic-status" id="camStatus">Hand tracking desligado</div>
+            </div>
+
+            <div class="command-input">
+                <input type="text" id="commandInput" placeholder="Digite um comando..." autocomplete="off">
+                <div class="cmd-hint">
+                    <span><kbd>Enter</kbd> Enviar</span>
+                    <span><kbd>Esc</kbd> Limpar</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Panel: Camera / Visualizer / Cards -->
+        <div class="panel" style="grid-column: 2 / 3; grid-row: 1 / 4; display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden;">
+            <div class="face-bar">
+                <span style="color: var(--text-muted);">FACE:</span>
+                <button data-face="neural" class="active">Neural Core</button>
+                <button data-face="board">Board</button>
+                <button data-face="radial">Radial</button>
+                <button data-face="rain">Rain</button>
+            </div>
+            <iframe id="faceFrame" src="/faces/neural/" title="ARIS face (ai-visualizer adaptado)"></iframe>
+            <div id="stage" style="position: relative; width: 100%; height: 100%; background: #000; overflow: hidden;">
+                <div class="bh-card" id="card1" style="left: 8%; top: 12%;" data-kind="file">
+                    <h4>README // ARIS</h4>
+                    <p>Pinça arrasta • 2 mãos = zoom • garra puxa de longe • R = grid</p>
+                </div>
+                <div class="bh-card" id="card2" style="left: 68%; top: 14%;" data-kind="text">
+                    <h4>NOTA // GESTOS</h4>
+                    <p>OK-sign + hysteresis + probation (barehands adaptado). Punho não é pinça.</p>
+                </div>
+                <div class="bh-card" id="card3" style="left: 60%; top: 62%;" data-kind="model3d">
+                    <h4>MODELO // 3D</h4>
+                    <p>Placeholder 3D: segure a pinça parado ~1s para girar. Arrasto vazio = throw.</p>
+                </div>
+                <video id="cameraVideo" style="width: 100%; height: 100%; object-fit: cover; display: none; transform: scaleX(-1); opacity: 0.4;" autoplay playsinline muted></video>
+                <canvas id="cameraCanvas" style="display: none;"></canvas>
+
+                <!-- Hand cursor -->
+                <div id="handCursor" style="position: absolute; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--accent-cyan); background: rgba(0,212,255,0.15); pointer-events: none; transform: translate(-50%, -50%); display: none; z-index: 10; transition: width 0.15s, height 0.15s, border-color 0.15s;"></div>
+                <div id="handCursorLabel" style="position: absolute; font-family: var(--font-mono); font-size: 9px; color: var(--accent-cyan); pointer-events: none; transform: translate(-50%, 20px); display: none; z-index: 10; white-space: nowrap;"></div>
+
+                <!-- Hologram (draggable) -->
+                <div id="hologram" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); cursor: grab; z-index: 5;">
+                    <div class="holo-ring" id="holoRing">
+                        <div class="holo-ring-inner"></div>
+                        <div class="holo-core" id="holoCore">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                <path d="M2 17l10 5 10-5"/>
+                                <path d="M2 12l10 5 10-5"/>
+                            </svg>
+                        </div>
+                        <div class="holo-label">A.R.I.S.</div>
+                    </div>
+                </div>
+
+                <!-- Floating orbs -->
+                <div class="holo-orb" id="orb1" style="left: 20%; top: 25%;" data-label="CPU"><span>37%</span></div>
+                <div class="holo-orb" id="orb2" style="left: 75%; top: 20%;" data-label="RAM"><span>43%</span></div>
+                <div class="holo-orb" id="orb3" style="left: 80%; top: 70%;" data-label="MODO"><span>EDGE</span></div>
+                <div class="holo-orb" id="orb4" style="left: 15%; top: 72%;" data-label="MIC"><span>OFF</span></div>
+
+                <div id="cameraPlaceholder" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 2;">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 7l-7 5 7 5V7z"></path>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                    </svg>
+                    <span style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">CAMERA OFFLINE</span>
+                    <button onclick="startCamera()" style="margin-top: 8px; padding: 6px 16px; background: var(--accent-cyan); color: #000; border: none; border-radius: 6px; font-family: var(--font-mono); font-size: 11px; cursor: pointer;">ATIVAR CAMERA</button>
+                </div>
+                <div style="position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: rgba(0,0,0,0.7); border-radius: 6px; backdrop-filter: blur(8px); z-index: 2;">
+                    <div style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent-red);" id="camDot"></div>
+                    <span style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 1px;" id="camLabel">OFF</span>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Right Panel: Chat + Events & Face Recognition -->
+        <div class="panel" style="grid-column: 3 / 4; grid-row: 1 / 4;">
+            <div class="panel-title">Conversa</div>
+            <div class="chat-history" id="chatHistory"></div>
+            <div class="panel-title">Eventos</div>
+            <div class="event-log" id="eventLog">
+                <div class="event-entry">
+                    <span class="event-time">00:00:00</span>
+                    <span class="event-type">SISTEMA</span>
+                    <span class="event-message">HUD iniciado. Aguardando câmera...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Face Consent Modal -->
+    <div class="face-consent-modal" id="faceConsentModal">
+        <div class="face-consent-content">
+            <div class="face-consent-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+            </div>
+            <div class="face-consent-title">Novo Rosto Detectado</div>
+            <div class="face-consent-message">
+                A ARIS detectou um rosto que não reconhece. Deseja cadastrar esta pessoa?
+            </div>
+            <img class="face-preview" id="facePreview" src="" alt="Rosto detectado" style="display: none;">
+            <div class="consent-buttons">
+                <button class="btn btn-primary" id="consentYes">Sim, Cadastrar</button>
+                <button class="btn btn-secondary" id="consentNo">Não, Ignorar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let eventSource = null;
+
+
+        // DOM Elements
+        const statusDot = document.getElementById('statusDot');
+        const statusLabel = document.getElementById('statusLabel');
+        const cpuMetric = document.getElementById('cpuMetric');
+        const ramMetric = document.getElementById('ramMetric');
+        const uptimeMetric = document.getElementById('uptimeMetric');
+        const modeMetric = document.getElementById('modeMetric');
+        const micButton = document.getElementById('micButton');
+        const micButtonText = document.getElementById('micButtonText');
+        const micStatus = document.getElementById('micStatus');
+        const commandInput = document.getElementById('commandInput');
+        const eventLog = document.getElementById('eventLog');
+        const faceConsentModal = document.getElementById('faceConsentModal');
+        const facePreview = document.getElementById('facePreview');
+        const consentYes = document.getElementById('consentYes');
+        const consentNo = document.getElementById('consentNo');
+
+        let micActive = false;
+        let pendingFaceEncoding = null;
+        let pendingFaceImage = null;
+
+        // No gesture commands — hand tracking is for direct control only (pinch=drag, 2-hand=scale)
+
+        // Initialize SSE connection
+        function connectSSE() {
+            eventSource = new EventSource('/api/hud/events');
+            
+            eventSource.onopen = () => {
+                logEvent('SISTEMA', 'Conectado ao Event Bus');
+            };
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleEvent(data);
+                } catch (e) {
+                    console.error('Erro ao parsear evento:', e);
+                }
+            };
+
+            eventSource.onerror = () => {
+                logEvent('SISTEMA', 'Conexão perdida. Reconectando...');
+                setTimeout(connectSSE, 5000);
+            };
+        }
+
+        // Handle incoming events
+        function handleEvent(data) {
+            const { type, payload } = data;
+            
+            switch (type) {
+                case 'aris_status':
+                    updateStatus(payload.state);
+                    break;
+                case 'system_metrics':
+                    updateMetrics(payload);
+                    break;
+                case 'mode_change':
+                    updateMode(payload.mode);
+                    break;
+                case 'vision_gesture_detected':
+                    // Hand tracking feedback — no action commands
+                    break;
+                case 'chat_message':
+                    appendChat(payload.sender || 'ARIS', payload.text || '');
+                    break;
+                case 'vision_face_detected':
+                    handleFaceDetected(payload);
+                    break;
+                case 'vision_face_recognized':
+                    logEvent('ROSTO', `Reconhecido: ${payload.name} (${(payload.confidence * 100).toFixed(0)}%)`);
+                    break;
+                case 'mic_status':
+                    updateMicStatus(payload.active);
+                    break;
+                default:
+                    logEvent('EVENTO', `${type}: ${JSON.stringify(payload).slice(0, 80)}`);
+            }
+        }
+
+        function updateStatus(state) {
+            const states = {
+                'listening': { class: 'listening', label: 'OUVINDO' },
+                'thinking': { class: 'thinking', label: 'PROCESSANDO' },
+                'speaking': { class: 'speaking', label: 'FALANDO' },
+                'executing': { class: 'executing', label: 'EXECUTANDO' },
+                'idle': { class: 'idle', label: 'OCIOSO' }
+            };
+            const s = states[state] || states.idle;
+            statusDot.className = `status-dot ${s.class}`;
+            statusLabel.textContent = s.label;
+        }
+
+        function updateMetrics(metrics) {
+            // Handle both flat {cpu: percent} and nested {cpu: {percent: val}}
+            const cpuVal = typeof metrics.cpu === 'object' ? metrics.cpu.percent : metrics.cpu;
+            const ramVal = typeof metrics.memory === 'object' ? metrics.memory.percent : metrics.ram;
+            const uptimeVal = metrics.uptime;
+
+            if (cpuVal !== undefined && cpuVal !== 0) cpuMetric.textContent = `${cpuVal}%`;
+            if (ramVal !== undefined && ramVal !== 0) ramMetric.textContent = `${ramVal}%`;
+            if (uptimeVal !== undefined && uptimeVal !== 'unknown') uptimeMetric.textContent = uptimeVal;
+        }
+
+        function updateMode(mode) {
+            modeMetric.textContent = mode.toUpperCase();
+        }
+
+        function updateMicStatus(active) {
+            micActive = active;
+            if (active) {
+                micButton.classList.remove('inactive');
+                micButton.classList.add('active');
+                micButtonText.textContent = 'MICROFONE ATIVO';
+                micStatus.textContent = 'Capturando áudio...';
+            } else {
+                micButton.classList.remove('active');
+                micButton.classList.add('inactive');
+                micButtonText.textContent = 'MICROFONE MUDO';
+                micStatus.textContent = 'Clique para ativar';
+            }
+        }
+
+        function updateRadarStatus(msg) {
+            // Radar status now shown in gesture overlay
+        }
+
+        // No gesture commands — direct control only
+
+        function handleFaceDetected(payload) {
+            const { face_image, encoding } = payload;
+            pendingFaceEncoding = encoding;
+            
+            if (face_image) {
+                facePreview.src = `data:image/jpeg;base64,${face_image}`;
+                facePreview.style.display = 'block';
+            }
+            
+            faceConsentModal.classList.add('show');
+            logEvent('ROSTO', 'Rosto desconhecido detectado - aguardando consentimento');
+        }
+
+        function logEvent(type, message) {
+            const now = new Date();
+            const time = now.toLocaleTimeString('pt-BR', { hour12: false });
+            
+            const entry = document.createElement('div');
+            entry.className = 'event-entry';
+            entry.innerHTML = `
+                <span class="event-time">${time}</span>
+                <span class="event-type">${type}</span>
+                <span class="event-message">${escapeHtml(message)}</span>
+            `;
+            
+            eventLog.insertBefore(entry, eventLog.firstChild);
+            
+            // Limit log entries
+            while (eventLog.children.length > 100) {
+                eventLog.removeChild(eventLog.lastChild);
+            }
+        }
+
+        function formatUptime(seconds) {
+            const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
+            const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Event listeners
+        micButton.addEventListener('click', () => {
+            fetch('/api/hud/mic/toggle', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) {
+                        updateMicStatus(data.active);
+                    }
+                })
+                .catch(() => logEvent('ERRO', 'Falha ao alternar microfone'));
+        });
+
+        commandInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const cmd = commandInput.value.trim();
+                if (cmd) {
+                    sendCommand(cmd);
+                    commandInput.value = '';
+                }
+            } else if (e.key === 'Escape') {
+                commandInput.value = '';
+            }
+        });
+
+        const chatHistory = document.getElementById('chatHistory');
+
+        function appendChat(sender, text) {
+            const entry = document.createElement('div');
+            const now = new Date();
+            const time = now.toLocaleTimeString('pt-BR', { hour12: false });
+            const cls = sender === 'VOCÊ' ? 'chat-msg-user' : 'chat-msg-aris';
+            entry.innerHTML = `<span class="chat-msg-time">${time}</span><span class="${cls}"><b>${escapeHtml(sender)}:</b> ${escapeHtml(text)}</span>`;
+            chatHistory.appendChild(entry);
+            while (chatHistory.children.length > 100) {
+                chatHistory.removeChild(chatHistory.firstChild);
+            }
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function loadChatHistory() {
+            fetch('/api/hud/chat').then(r => r.json()).then(data => {
+                (data.messages || []).forEach(m => appendChat(m.sender, m.text));
+            }).catch(() => {});
+        }
+
+        function sendCommand(cmd) {
+            logEvent('COMANDO', cmd);
+            appendChat('VOCÊ', cmd);
+            fetch('/api/hud/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command: cmd })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.response) {
+                    appendChat('ARIS', data.response);
+                    logEvent('RESPOSTA', data.response.slice(0, 80));
+                }
+            })
+            .catch(() => logEvent('ERRO', 'Falha ao enviar comando'));
+        }
+
+        // Face switching (ai-visualizer adaptado — Neural Core padrão)
+        document.querySelectorAll('.face-bar button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.face-bar button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('faceFrame').src = '/faces/' + btn.dataset.face + '/';
+                logEvent('FACE', 'Trocada para: ' + btn.dataset.face);
+            });
+        });
+
+        consentYes.addEventListener('click', () => {
+            if (pendingFaceEncoding) {
+                fetch('/api/hud/face/consent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        encoding: pendingFaceEncoding,
+                        name: 'Pessoa ' + Date.now().toString().slice(-4),
+                        consent: true
+                    })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.ok) {
+                        logEvent('ROSTO', `Novo rosto cadastrado: ${data.entity_id}`);
+                    }
+                })
+                .catch(() => logEvent('ERRO', 'Falha ao cadastrar rosto'));
+            }
+            closeFaceConsent();
+        });
+
+        consentNo.addEventListener('click', () => {
+            closeFaceConsent();
+        });
+
+        function closeFaceConsent() {
+            faceConsentModal.classList.remove('show');
+            pendingFaceEncoding = null;
+            pendingFaceImage = null;
+            facePreview.style.display = 'none';
+        }
+
+        // Camera + MediaPipe Hand Tracking (Bare Hands interactive pattern)
+        const cameraVideo = document.getElementById('cameraVideo');
+        const cameraCanvas = document.getElementById('cameraCanvas');
+        const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+        const handCursor = document.getElementById('handCursor');
+        const handCursorLabel = document.getElementById('handCursorLabel');
+        const hologram = document.getElementById('hologram');
+        const stage = document.getElementById('stage');
+        let mpHands = null;
+        let mpCamera = null;
+        // Interactive state
+        let isPinching = false;
+        let grabTarget = null; // 'hologram', 'orb1'-'orb4', or null
+        let grabOffsetX = 0, grabOffsetY = 0;
+        let prevHandX = 0, prevHandY = 0;
+        let handVelocityX = 0, handVelocityY = 0;
+        let holoX = 0, holoY = 0; // hologram position relative to center
+        let holoScale = 1;
+        let twoHandDist = 0;
+
+        // Orb positions (percentage of stage)
+        const orbs = {
+            orb1: { el: document.getElementById('orb1'), x: 20, y: 25 },
+            orb2: { el: document.getElementById('orb2'), x: 75, y: 20 },
+            orb3: { el: document.getElementById('orb3'), x: 80, y: 70 },
+            orb4: { el: document.getElementById('orb4'), x: 15, y: 72 },
+        };
+
+        function getStageCoords(landmark) {
+            // Mirror X (camera is mirrored), convert 0-1 to stage pixels
+            const rect = stage.getBoundingClientRect();
+            return {
+                x: (1 - landmark.x) * rect.width,
+                y: landmark.y * rect.height
+            };
+        }
+
+        function distanceBetweenHands(l1, l2) {
+            return Math.hypot(l1[0].x - l2[0].x, l1[0].y - l2[0].y);
+        }
+
+        // Motor de gestos adaptado de github.com/jaredrhod/barehands
+        // (Jared Rhodenizer, AGPL-3.0-or-later): OK-sign contrast law,
+        // hysteresis, probation 400ms/4 frames, speed-aware release,
+        // smoothing 0.45 + histórico 10 frames p/ peak-velocity throw,
+        // punho nunca é pinça, garra = force-pull, R = grid.
+        const bhState = { okEma: 0, okPrev: false, openPrev: false, badRun: 0, probKill: false, pinchT: 0, history: [] };
+
+        function fingerRatio(lms, t, m) {
+            const W0 = lms[0];
+            const td = Math.hypot(lms[t].x - W0.x, lms[t].y - W0.y);
+            const md = Math.hypot(lms[m].x - W0.x, lms[m].y - W0.y);
+            return md > 0 ? td / md : 9;
+        }
+
+        function barehandsPinch(lms, wasPinched, now) {
+            const W0 = lms[0];
+            const span = Math.hypot(lms[5].x - W0.x, lms[5].y - W0.y)
+                       + Math.hypot(lms[17].x - W0.x, lms[17].y - W0.y);
+            const gap = Math.hypot(lms[4].x - lms[8].x, lms[4].y - lms[8].y);
+            const ratio = span > 0 ? gap / span : 1;
+            const f8v = fingerRatio(lms, 8, 5);
+            const backMean = (fingerRatio(lms, 12, 9) + fingerRatio(lms, 16, 13) + fingerRatio(lms, 20, 17)) / 3;
+            const palmW = Math.hypot(lms[5].x - lms[17].x, lms[5].y - lms[17].y);
+            const aspect = palmW > 0 ? span / palmW : 9;
+            const tRel = span > 0 ? Math.hypot(lms[4].x - lms[13].x, lms[4].y - lms[13].y) / span : 0;
+            const extArr = [[8, 5], [12, 9], [16, 13], [20, 17]].map(([t, m]) =>
+                Math.hypot(lms[t].x - W0.x, lms[t].y - W0.y) > 1.45 * Math.hypot(lms[m].x - W0.x, lms[m].y - W0.y));
+            const extFingers = extArr.filter(Boolean).length;
+            if (aspect > 6) return { pinched: false, ratio, extFingers, hspd: 0 };
+            const okBack = (backMean - f8v > 0.18 && backMean > 1.30) || (aspect < 2.0 && tRel > 0.95);
+            bhState.okEma = 0.70 * bhState.okEma + 0.30 * (okBack ? 1 : 0);
+            const okNow = okBack && bhState.okPrev;
+            bhState.okPrev = okBack;
+            let hspd = 0;
+            const hh = bhState.history;
+            if (hh.length >= 2) {
+                const p0 = hh[0], p1 = hh[hh.length - 1];
+                const pdt = (p1.t - p0.t) / 1000;
+                if (pdt > 0) hspd = Math.hypot(p1.x - p0.x, p1.y - p0.y) / pdt;
+            }
+            const relBar = hspd > 800 ? 0.70 : 0.55;
+            const openRead = ratio >= relBar;
+            const relOk = hspd > 800 ? (openRead && bhState.openPrev) : openRead;
+            bhState.openPrev = openRead;
+            let pinched;
+            if (wasPinched) pinched = !relOk;
+            else pinched = ratio < (aspect < 2.0 ? 0.38 : 0.32) && (okNow || bhState.okEma > 0.55);
+            if (pinched && !wasPinched) { bhState.badRun = 0; bhState.pinchT = now; }
+            else if (pinched && wasPinched && now - bhState.pinchT < 400 && hspd < 600) {
+                bhState.badRun = okBack ? 0 : bhState.badRun + 1;
+                if (bhState.badRun >= 4) pinched = false;
+            } else bhState.badRun = 0;
+            return { pinched, ratio, extFingers, hspd };
+        }
+
+        function onHandResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                handCursor.style.display = 'none';
+                handCursorLabel.style.display = 'none';
+                if (isPinching) releaseGrab();
+                return;
+            }
+
+            const hand = results.multiHandLandmarks[0];
+            const idx = hand[8]; // index finger tip
+            const thumb = hand[4]; // thumb tip
+            const now = Date.now();
+            // smoothing 0.45 (barehands) sobre o ponto médio pinça
+            const px = (idx.x + thumb.x) / 2, py = (idx.y + thumb.y) / 2;
+            const rect0 = stage.getBoundingClientRect();
+            const smX = (1 - px) * rect0.width, smY = py * rect0.height;
+            bhState.history.push({ x: smX, y: smY, t: now });
+            if (bhState.history.length > 10) bhState.history.shift();
+            const pos = getStageCoords(idx);
+            const bh = barehandsPinch(hand, isPinching, now);
+            const pinching = bh.pinched;
+
+            // Update hand cursor
+            handCursor.style.display = 'block';
+            handCursor.style.left = pos.x + 'px';
+            handCursor.style.top = pos.y + 'px';
+
+            if (pinching) {
+                handCursor.classList.add('pinching');
+                handCursorLabel.style.display = 'block';
+                handCursorLabel.style.left = pos.x + 'px';
+                handCursorLabel.style.top = pos.y + 'px';
+                handCursorLabel.textContent = 'GRAB';
+            } else {
+                handCursor.classList.remove('pinching');
+                handCursorLabel.style.display = 'none';
+            }
+
+            // Velocity tracking for throw
+            handVelocityX = pos.x - prevHandX;
+            handVelocityY = pos.y - prevHandY;
+            prevHandX = pos.x;
+            prevHandY = pos.y;
+
+            // Pinch started
+            if (pinching && !isPinching) {
+                startGrab(pos);
+            }
+            // Pinch held — drag
+            else if (pinching && isPinching) {
+                dragGrab(pos);
+            }
+            // Pinch released
+            else if (!pinching && isPinching) {
+                releaseGrab();
+            }
+
+            // Two hands = scale (holograma ou card agarrado)
+            if (results.multiHandLandmarks.length >= 2) {
+                const newDist = distanceBetweenHands(results.multiHandLandmarks[0], results.multiHandLandmarks[1]);
+                if (twoHandDist > 0) {
+                    const scaleDelta = (newDist - twoHandDist) * 3;
+                    if (grabTarget && grabTarget.startsWith('card')) {
+                        const card = document.getElementById(grabTarget);
+                        if (card) {
+                            const cur = parseFloat(card.dataset.scale || '1');
+                            const ns = Math.max(0.5, Math.min(2.5, cur + scaleDelta));
+                            card.dataset.scale = ns;
+                            card.style.transform = `scale(${ns})`;
+                        }
+                    } else {
+                        holoScale = Math.max(0.3, Math.min(3, holoScale + scaleDelta));
+                        updateHologramTransform();
+                    }
+                }
+                twoHandDist = newDist;
+            } else {
+                twoHandDist = 0;
+            }
+
+            // Garra: palma aberta (4+ dedos) após soltar pinça = force-pull
+            if (!pinching && bh.extFingers >= 4 && !isPinching && bh.hspd < 600) {
+                if (!window._lastClaw || now - window._lastClaw > 3000) {
+                    window._lastClaw = now;
+                    clawPull(pos);
+                }
+            }
+
+        }
+
+        function startGrab(pos) {
+            isPinching = true;
+            const holoRect = hologram.getBoundingClientRect();
+            const holoCenterX = holoRect.left + holoRect.width / 2;
+            const holoCenterY = holoRect.top + holoRect.height / 2;
+
+            // Check if near hologram
+            if (Math.hypot(pos.x - holoCenterX, pos.y - holoCenterY) < 120) {
+                grabTarget = 'hologram';
+                grabOffsetX = pos.x - holoCenterX;
+                grabOffsetY = pos.y - holoCenterY;
+                hologram.classList.add('grabbed');
+                return;
+            }
+
+            // Check orbs
+            for (const [id, orb] of Object.entries(orbs)) {
+                const rect = orb.el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                if (Math.hypot(pos.x - cx, pos.y - cy) < 40) {
+                    grabTarget = id;
+                    grabOffsetX = pos.x - cx;
+                    grabOffsetY = pos.y - cy;
+                    orb.el.classList.add('grabbed');
+                    return;
+                }
+            }
+
+            // Check cards (barehands: pinça em qualquer lugar agarra/move)
+            for (const card of document.querySelectorAll('.bh-card')) {
+                const rect = card.getBoundingClientRect();
+                const srect = stage.getBoundingClientRect();
+                const cx = rect.left - srect.left + rect.width / 2;
+                const cy = rect.top - srect.top + rect.height / 2;
+                if (Math.hypot(pos.x - cx, pos.y - cy) < Math.max(rect.width, rect.height) / 2 + 20) {
+                    grabTarget = card.id;
+                    grabOffsetX = pos.x - cx;
+                    grabOffsetY = pos.y - cy;
+                    card.classList.add('grabbed');
+                    return;
+                }
+            }
+        }
+
+        // Garra (claw): palma aberta→garra mira item longe→puxa pra perto
+        function clawPull(pos) {
+            let best = null, bestD = 1e9;
+            const srect = stage.getBoundingClientRect();
+            for (const card of document.querySelectorAll('.bh-card')) {
+                const rect = card.getBoundingClientRect();
+                const cx = rect.left - srect.left + rect.width / 2;
+                const cy = rect.top - srect.top + rect.height / 2;
+                const d = Math.hypot(pos.x - cx, pos.y - cy);
+                if (d < bestD) { bestD = d; best = card; }
+            }
+            if (best && bestD > 150) {
+                best.style.left = ((pos.x / srect.width) * 100) + '%';
+                best.style.top = ((pos.y / srect.height) * 100) + '%';
+                best.classList.add('presented');
+                setTimeout(() => best.classList.remove('presented'), 1500);
+                logEvent('GARRA', 'Item puxado: ' + best.id);
+            }
+        }
+
+        // R = organizar cards em grid
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') {
+                const cards = [...document.querySelectorAll('.bh-card')];
+                cards.forEach((c, i) => {
+                    c.style.left = (8 + (i % 3) * 28) + '%';
+                    c.style.top = (12 + Math.floor(i / 3) * 30) + '%';
+                });
+                logEvent('GRID', cards.length + ' cards organizados');
+            }
+        });
+
+        function dragGrab(pos) {
+            if (!grabTarget) return;
+            const rect = stage.getBoundingClientRect();
+
+            if (grabTarget === 'hologram') {
+                holoX = pos.x - grabOffsetX - rect.width / 2;
+                holoY = pos.y - grabOffsetY - rect.height / 2;
+                updateHologramTransform();
+            } else if (grabTarget && grabTarget.startsWith('card')) {
+                const card = document.getElementById(grabTarget);
+                if (card) {
+                    card.style.left = (((pos.x - grabOffsetX) / rect.width) * 100) + '%';
+                    card.style.top = (((pos.y - grabOffsetY) / rect.height) * 100) + '%';
+                }
+            } else if (orbs[grabTarget]) {
+                const orb = orbs[grabTarget];
+                orb.x = ((pos.x - grabOffsetX) / rect.width) * 100;
+                orb.y = ((pos.y - grabOffsetY) / rect.height) * 100;
+                orb.el.style.left = orb.x + '%';
+                orb.el.style.top = orb.y + '%';
+            }
+        }
+
+        function releaseGrab() {
+            isPinching = false;
+            hologram.classList.remove('grabbed');
+            for (const orb of Object.values(orbs)) orb.el.classList.remove('grabbed');
+            document.querySelectorAll('.bh-card.grabbed').forEach(c => c.classList.remove('grabbed'));
+
+            // Throw com peak-velocity dos últimos ~200ms (barehands v3.6)
+            const hh = bhState.history;
+            let pvx = handVelocityX, pvy = handVelocityY;
+            if (hh.length >= 2) {
+                let mx = 0;
+                for (let i = 1; i < hh.length; i++) {
+                    const dt = (hh[i].t - hh[i-1].t) / 1000;
+                    if (dt > 0) {
+                        const vx = (hh[i].x - hh[i-1].x) / dt, vy = (hh[i].y - hh[i-1].y) / dt;
+                        if (Math.hypot(vx, vy) > Math.hypot(mx, 0)) { mx = Math.hypot(vx, vy); pvx = vx * 0.016; pvy = vy * 0.016; }
+                    }
+                }
+            }
+            if (grabTarget === 'hologram' && (Math.abs(pvx) > 5 || Math.abs(pvy) > 5)) {
+                holoX += pvx * 8;
+                holoY += pvy * 8;
+                updateHologramTransform();
+            }
+            grabTarget = null;
+        }
+
+        function updateHologramTransform() {
+            hologram.style.transform = `translate(calc(-50% + ${holoX}px), calc(-50% + ${holoY}px)) scale(${holoScale})`;
+        }
+
+        // No gesture commands — direct control only
+
+        let cameraActive = false;
+
+        function toggleCamera() {
+            if (cameraActive) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        }
+
+        function stopCamera() {
+            if (mpCamera) { mpCamera.stop(); mpCamera = null; }
+            if (cameraVideo.srcObject) {
+                cameraVideo.srcObject.getTracks().forEach(t => t.stop());
+                cameraVideo.srcObject = null;
+            }
+            cameraVideo.style.display = 'none';
+            cameraPlaceholder.style.display = 'flex';
+            handCursor.style.display = 'none';
+            handCursorLabel.style.display = 'none';
+            cameraActive = false;
+            const btn = document.getElementById('camButton');
+            btn.classList.remove('active');
+            btn.classList.add('inactive');
+            document.getElementById('camButtonText').textContent = 'CAMERA OFF';
+            document.getElementById('camStatus').textContent = 'Hand tracking desligado';
+            document.getElementById('camDot').style.background = 'var(--accent-red)';
+            document.getElementById('camLabel').textContent = 'OFF';
+            logEvent('SISTEMA', 'Camera desligada');
+        }
+
+        async function startCamera() {
+            if (cameraActive) return;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+                cameraVideo.srcObject = stream;
+                cameraVideo.style.display = 'block';
+                cameraPlaceholder.style.display = 'none';
+                cameraActive = true;
+
+                const btn = document.getElementById('camButton');
+                btn.classList.remove('inactive');
+                btn.classList.add('active');
+                document.getElementById('camButtonText').textContent = 'CAMERA ON';
+                document.getElementById('camStatus').textContent = 'Hand tracking ativo';
+                document.getElementById('camDot').style.background = 'var(--accent-green)';
+                document.getElementById('camLabel').textContent = 'LIVE';
+                document.getElementById('camLabel').style.color = 'var(--accent-green)';
+
+                mpHands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}` });
+                mpHands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.5 });
+                mpHands.onResults(onHandResults);
+
+                mpCamera = new Camera(cameraVideo, {
+                    onFrame: async () => { if (mpHands) await mpHands.send({ image: cameraVideo }); },
+                    width: 640, height: 480
+                });
+                mpCamera.start();
+                logEvent('SISTEMA', 'Camera + Hand Tracking ativados');
+            } catch (err) {
+                logEvent('ERRO', `Camera: ${err.message}`);
+                cameraActive = false;
+            }
+        }
+
+        function init() {
+            connectSSE();
+            loadChatHistory();
+            fetch('/api/hud/status').then(r => r.json()).then(data => {
+                if (data.status) updateStatus(data.status);
+                if (data.metrics) updateMetrics(data.metrics);
+                if (data.mode) updateMode(data.mode);
+                if (data.mic_active !== undefined) updateMicStatus(data.mic_active);
+            }).catch(() => {});
+            // Auto-start camera
+            startCamera();
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

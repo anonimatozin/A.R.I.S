@@ -10,16 +10,23 @@ import queue
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+try:
+    import webrtcvad
+except ImportError:
+    webrtcvad = None
 
 import core.handlers  # noqa: F401 — auto-registra todos os handlers
 from config.esp32_config import ESP32Config
 from config.settings import Settings
 from core.advanced_interpreter import AdvancedInterpreter, Intent
+from core.calendar import CalendarAccountConfig, CalendarManager
 from core.cll1_heartbeat import CLL1Heartbeat
 from core.cll1_server import CLL1Server
 from core.commands import registry
-from core.gmail import GmailService
+from core.gmail import GmailAccountConfig, GmailManager, GmailService
 from core.greeting import GreetingService
 from core.llm import LLMRouter
 from core.memcore import MemoryKind
@@ -36,7 +43,12 @@ from core.neural.events import (
     EVENT_TIMER_FINISHED,
     Event,
 )
+from core.neural.mode import get_mode_manager
+from core.neural.world_model import WorldModel
 from core.perception import PerceptionConfig, PerceptionManager
+from core.perception.continuous_voice_sensor import ContinuousVoiceConfig, ContinuousVoiceSensor
+from core.proactive_engine import build_proactive_engine
+from core.reflex_layer import ReflexLayer, build_reflex_layer
 from core.services import ServiceContainer
 from core.sync_engine import SyncEngine
 from modules.auto_redaction import AutoRedaction
@@ -48,6 +60,7 @@ from modules.desktop_tools import DesktopTools
 from modules.dictation_mode import DictationMode
 from modules.entertainment import Entertainment
 from modules.esp32_hardware import HardwareManager, SystemState
+from modules.face_matrix import HUD_STATES, FaceMatrixClient
 from modules.knowledge_graph import KnowledgeGraph
 from modules.morning_digest import MorningDigest
 from modules.multi_agent import MultiAgentSystem
@@ -58,6 +71,8 @@ from modules.skills_system import SkillsSystem
 from modules.turbo_mode import TurboMode
 from search.hyper_search import HyperSearch
 from system.analyzer import PersonalAnalyzer
+from utils import eyes_bridge
+from utils.clap_detector import ClapDetector, ClapDetectorConfig
 from utils.logger import Logger
 from utils.terminal import ArisUI, Terminal
 from utils.voice import Voice
@@ -102,7 +117,52 @@ class Aris:
         self._hybrid_voice = HybridVoice(
             rate=self._settings.VOICE_RATE,
             volume=self._settings.VOICE_VOLUME,
+            logger=self._logger,
         )
+
+        # Voz contínua (VAD + wake word + STT leve)
+        self._continuous_voice = ContinuousVoiceSensor(
+            send_message_fn=self.send_message,
+            event_bus=None,  # será definido após _neural ser criado
+            config=ContinuousVoiceConfig(
+                enabled=self._settings.CONTINUOUS_VOICE_ENABLED,
+                vad_aggressiveness=self._settings.VAD_AGGRESSIVENESS,
+                stt_model=self._settings.STT_MODEL,
+                stt_device=self._settings.STT_DEVICE,
+                stt_compute_type=self._settings.STT_COMPUTE_TYPE,
+                vosk_model_path=self._settings.VOSK_MODEL_PATH,
+                warmup_frames=self._settings.WARMUP_FRAMES,
+                energy_threshold=self._settings.ENERGY_THRESHOLD,
+                device_index=self._settings.MIC_DEVICE_INDEX,
+            ),
+            logger=self._logger,
+        )
+
+        # Detector de palmas (2 palmas rápidas -> intro JARVIS)
+        self._clap_detector = None
+        try:
+            self._clap_detector = ClapDetector(
+                on_double_clap=self._on_double_clap,
+                config=ClapDetectorConfig(
+                    sample_rate=16000,
+                    frame_duration_ms=30,
+                    calibration_frames=100,
+                    energy_threshold_multiplier=4.0,
+                    transient_min_ms=60,
+                    transient_max_ms=250,
+                    min_peak_rms=0.04,
+                    double_clap_min_gap_ms=300,
+                    double_clap_max_gap_ms=1200,
+                    cooldown_ms=2000,
+                    device_index=self._settings.MIC_DEVICE_INDEX,
+                ),
+                logger=self._logger,
+            )
+            if self._logger:
+                self._logger.info("Clap detector construído.")
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Clap detector indisponível: {e}")
 
         self._memory = MemoryManager(
             logger=self._logger,
@@ -163,7 +223,15 @@ class Aris:
         self._skills = SkillsSystem(data_dir=self._settings.DATA_DIR)
         self._dictation = DictationMode()
 
-        # Gmail (read-only)
+        # WhatsApp Web integration
+        try:
+            from modules.whatsapp import WhatsApp
+            self._whatsapp = WhatsApp(data_dir=self._settings.DATA_DIR / "whatsapp")
+        except Exception as e:
+            self._whatsapp = None
+            self._logger.warning(f"WhatsApp module unavailable: {e}")
+
+        # Gmail (read-only) — Single account (legacy)
         self._gmail = GmailService(
             client_id=os.getenv("ARIS_GMAIL_CLIENT_ID", ""),
             client_secret=os.getenv("ARIS_GMAIL_CLIENT_SECRET", ""),
@@ -172,6 +240,64 @@ class Aris:
         )
         if self._gmail.is_configured:
             self._gmail.load_stored_tokens()
+
+        # Gmail Manager — Multi-account support
+        self._gmail_manager = GmailManager(safety_manager=self._safety)
+
+        # Add primary account from env if configured
+        primary_client_id = os.getenv("ARIS_GMAIL_CLIENT_ID", "")
+        primary_client_secret = os.getenv("ARIS_GMAIL_CLIENT_SECRET", "")
+        if primary_client_id and primary_client_secret:
+            self._gmail_manager.add_account(GmailAccountConfig(
+                account_id="primary",
+                display_name="Principal",
+                client_id=primary_client_id,
+                client_secret=primary_client_secret,
+                account_email=os.getenv("ARIS_GMAIL_ACCOUNT_EMAIL", ""),
+                auth_port=int(os.getenv("ARIS_GMAIL_AUTH_PORT", "8741")),
+            ))
+
+        # Add second account from env if configured
+        secondary_client_id = os.getenv("ARIS_GMAIL2_CLIENT_ID", "")
+        secondary_client_secret = os.getenv("ARIS_GMAIL2_CLIENT_SECRET", "")
+        if secondary_client_id and secondary_client_secret:
+            self._gmail_manager.add_account(GmailAccountConfig(
+                account_id="secondary",
+                display_name="Secundária",
+                client_id=secondary_client_id,
+                client_secret=secondary_client_secret,
+                account_email=os.getenv("ARIS_GMAIL2_ACCOUNT_EMAIL", ""),
+                auth_port=int(os.getenv("ARIS_GMAIL2_AUTH_PORT", "8742")),
+            ))
+
+        # Load tokens for all accounts
+        self._gmail_manager.load_all_tokens()
+
+        # Calendar Manager
+        self._calendar_manager = CalendarManager(safety_manager=self._safety)
+
+        # Add primary calendar account (can reuse Gmail OAuth)
+        cal_client_id = os.getenv("ARIS_CALENDAR_CLIENT_ID", "") or primary_client_id
+        cal_client_secret = os.getenv("ARIS_CALENDAR_CLIENT_SECRET", "") or primary_client_secret
+        if cal_client_id and cal_client_secret:
+            self._calendar_manager.add_account(CalendarAccountConfig(
+                account_id="primary",
+                display_name="Principal",
+                client_id=cal_client_id,
+                client_secret=cal_client_secret,
+                account_email=os.getenv("ARIS_CALENDAR_ACCOUNT_EMAIL", "") or os.getenv("ARIS_GMAIL_ACCOUNT_EMAIL", ""),
+                auth_port=int(os.getenv("ARIS_CALENDAR_AUTH_PORT", "8743")),
+            ))
+
+        # Load calendar tokens
+        self._calendar_manager.load_all_tokens()
+
+        # World Model with Calendar integration
+        self._world_model = WorldModel(
+            db=self._memory._db,
+            logger=self._logger,
+            calendar_manager=self._calendar_manager,
+        )
 
         # Hardware ESP32
         self._esp32_config = ESP32Config()
@@ -184,6 +310,7 @@ class Aris:
         self._proactive_enabled = True
         self._briefing_offered = False
         self._last_aris_question = None
+        self._is_speaking = False  # Para barge-in: indica se TTS está tocando
 
         if self._settings.SAFETY_PASSWORD:
             self._safety.set_master_password(self._settings.SAFETY_PASSWORD)
@@ -200,6 +327,26 @@ class Aris:
         )
         self._neural.register_services(self._container)
         self._neural.set_handler_context(self._build_handler_context)
+
+        # Camada Reflexo: mini-agentes determinísticos (sem LLM)
+        try:
+            self._neural.initialize_reflex(
+                plugins_dir=str(self._settings.PLUGINS_DIR),
+                analyzer=self._analyzer,
+                state=self._neural.state,
+                memory=self._neural.memory,
+                working=self._neural.working,
+                mode_manager=self._container.get("neural.mode_manager") if hasattr(self._container, "get") else None,
+            )
+            if self._logger:
+                self._logger.info("Camada Reflexo inicializada com plugins")
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Camada Reflexo: falha ao inicializar ({e})")
+
+        # Conectar event bus ao sensor de voz contínua
+        if hasattr(self, "_continuous_voice") and self._continuous_voice:
+            self._continuous_voice._event_bus = self._neural.event_bus
 
         # Conectar event bus ao MemoryManager para eventos memory.*
         self._memory.set_event_bus(self._neural.event_bus)
@@ -268,6 +415,64 @@ class Aris:
                 self._logger.warning(f"Vision Engine indisponível: {e}")
 
         self._running = False
+        self._shutdown_done = False  # guarda de idempotência do shutdown()
+
+        # Matriz de LED 8x8 (ESP32 + MAX7219) — periférico opcional:
+        # falha de conexão é silenciosa e nunca bloqueia o ARIS.
+        self._face_matrix: FaceMatrixClient | None = None
+        self._last_aris_status = "idle"
+        try:
+            self._face_matrix = FaceMatrixClient(
+                ip=self._settings.FACE_MATRIX_IP, logger=self._logger
+            )
+            self._container.set("modules.face_matrix", self._face_matrix)
+            if self._logger:
+                if self._face_matrix.enabled:
+                    self._logger.info(f"Matriz de LED em {self._face_matrix.ip}")
+                else:
+                    self._logger.info(
+                        "Matriz de LED desativada (ARIS_FACE_MATRIX_IP vazio)"
+                    )
+            # Mesmos eventos de estado que o HUD consome
+            bus = self._neural.event_bus
+            bus.subscribe("aris_status", self._face_matrix.handle_event)
+            bus.subscribe("mic_status", self._face_matrix.handle_event)
+        except Exception as e:
+            self._face_matrix = None
+            if self._logger:
+                self._logger.warning(f"Matriz de LED indisponível: {e}")
+
+        # Camada Reflex do loop principal (mini-agentes rápidos: time,
+        # calc, sys, memory, jokenpo). Precisa existir — sem ela o
+        # `if self._reflex_layer` do loop levantava AttributeError.
+        self._reflex_layer: ReflexLayer | None = None
+        try:
+            self._reflex_layer = build_reflex_layer(self, logger=self._logger)
+            if self._logger:
+                self._logger.info(
+                    "Reflex Layer ativa (time, calc, sys, memory, jokenpo)"
+                )
+        except Exception as e:
+            self._reflex_layer = None
+            if self._logger:
+                self._logger.warning(f"Reflex Layer indisponível: {e}")
+
+        # Parte 8: ponte para o agente novo (aris_agent) — construída no
+        # start() quando ARIS_AGENT_ENABLED=true; None = fluxo antigo intacto.
+        self._agent_bridge = None
+
+        # Proactive Engine (será iniciado no start())
+        self._proactive_engine = None
+        try:
+            self._proactive_engine = build_proactive_engine(self)
+            if self._proactive_engine:
+                self._container.set("proactive.engine", self._proactive_engine)
+                if self._logger:
+                    self._logger.info("Proactive Engine construído.")
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Proactive Engine indisponível: {e}")
+
         self._setup_signal_handlers()
 
     def _register_module_services(self) -> None:
@@ -293,6 +498,7 @@ class Aris:
             ("modules.perception", self._perception),
             ("memory", self._memory),
             ("settings", self._settings),
+            ("neural.mode_manager", get_mode_manager()),
         ):
             self._container.set(name, instance)
 
@@ -322,11 +528,10 @@ class Aris:
         if mic_mode:
             if self._hybrid_voice._recognizer is None:
                 return "", MessageOrigin()
-            print("  Escutando...", end="\r")
+            ArisUI.show_info("Escutando...")
             result = self._hybrid_voice.listen(timeout=6) or ""
-            print(" " * 60, end="\r")
             if result:
-                print(f"  Voce disse: {result}")
+                ArisUI.show_user_input(result)
             return result, MessageOrigin(source="voice", channel="mic", user_id="local")
         else:
             text = ArisUI.input_modern(
@@ -374,6 +579,7 @@ class Aris:
             "voice": self._voice,
             "settings": self._settings,
             "hardware": self._hardware,
+            "face_matrix": self._face_matrix,
             "event_bus": self._neural.event_bus,
             "state": self._neural.state,
             "perception": self._perception,
@@ -381,6 +587,10 @@ class Aris:
             "multi_chat": self._multi_chat,
             "llm_router": self._llm_router,
             "gmail": self._gmail,
+            "gmail_manager": self._gmail_manager,
+            "calendar": self._calendar_manager,
+            "world_model": self._world_model,
+            "whatsapp": self._whatsapp,
         }
 
         # Dados pré-computados para handlers que precisam
@@ -425,7 +635,16 @@ class Aris:
             if not result.success and result.error.startswith("Seguranca:"):
                 ArisUI.show_error(result.error)
                 return None
-            return result.output if result.success else None
+            if result.success:
+                return result.output
+            # Honestidade: a falha REAL volta para a resposta. Sem isso, a
+            # ação falhava em silêncio e só a frase genérica do LLM (que
+            # assume sucesso) era falada.
+            reason = (result.error or result.output or "").strip()
+            if not reason:
+                reason = "a ação não pôde ser concluída"
+            ArisUI.show_error(reason)
+            return f"Não deu certo: {reason}"
 
         # Fallback: modulos sem handler registrado ainda
         self._execute_intent_legacy(intent)
@@ -467,7 +686,9 @@ class Aris:
                                   "ou montar um briefing do dia.")
             if suggestion:
                 print(f"  💡 {suggestion}")
+                self._is_speaking = True
                 voice.speak(suggestion)
+                self._is_speaking = False
         except Exception as e:
             if self._logger:
                 self._logger.debug(f"Proactive suggestion skipped: {e}")
@@ -532,6 +753,13 @@ class Aris:
         else:
             self._neural.state.update_hardware(connected=False, available=False)
 
+        # Iniciar matriz de LED 8x8 (opcional: sem IP, fica desativada)
+        if getattr(self, "_face_matrix", None):
+            try:
+                self._face_matrix.start()
+            except Exception as e:
+                self._logger.warning(f"Matriz de LED: falha ao iniciar ({e})")
+
         # Iniciar scheduler em background
         self._scheduler.start_checker(callback=self._on_task_due)
         self._neural.state.update_scheduler(
@@ -553,16 +781,65 @@ class Aris:
             except Exception as e:
                 self._logger.warning(f"Percepção: falha ao iniciar ({e})")
 
+        # Iniciar voz contínua (VAD + wake word + STT)
+        if hasattr(self, "_continuous_voice") and self._continuous_voice:
+            try:
+                # Configurar callback para wake word beep e barge-in
+                self._continuous_voice.set_transcript_callback(self._on_voice_transcript)
+                self._continuous_voice.start()
+                self._logger.info("Voz contínua iniciada (VAD + wake word + STT)")
+            except Exception as e:
+                self._logger.warning(f"Voz contínua: falha ao iniciar ({e})")
+                # Fallback gracioso: continuar sem microfone
+                self._continuous_voice = None
+
+        # Iniciar detector de palmas (2 palmas -> intro JARVIS)
+        if hasattr(self, "_clap_detector") and self._clap_detector:
+            try:
+                if self._clap_detector.start():
+                    self._logger.info("Clap detector iniciado (2 palmas = intro JARVIS)")
+                else:
+                    self._logger.warning("Clap detector: não disponível (PyAudio?)")
+            except Exception as e:
+                self._logger.warning(f"Clap detector: falha ao iniciar ({e})")
+                self._clap_detector = None
+
+        # Iniciar Proactive Engine
+        if self._proactive_engine:
+            try:
+                self._proactive_engine.start()
+                self._logger.info("Proactive Engine iniciado.")
+            except Exception as e:
+                self._logger.warning(f"Proactive Engine: falha ao iniciar ({e})")
+
         # CLL1 distributed: server, heartbeat, sync engine
         self._start_distributed()
+
+        # Sincronizar personalidade com CLL1 (Edge) e painel web
+        self._sync_personality()
+
+        # ARIS Eyes: mood ocioso vem da personalidade; log de uma linha
+        eyes_bridge.refresh_idle_mood()
+        running = eyes_bridge.probe()
+        self._logger.info(
+            "ARIS Eyes: "
+            + ("conectado" if running else "não rodando (./aris_eyes/aris-eyes.sh --mini)")
+        )
 
         # Exibir banner
         self._print_banner()
 
+        # Status do microfone
+        mic_available = self._continuous_voice is not None and self._continuous_voice.available
+        mic_enabled = self._continuous_voice is not None and self._continuous_voice.enabled
+        ArisUI.show_mic_status(mic_enabled, mic_available)
+
         # Saudação por voz
         voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
         if voice.enabled:
+            self._is_speaking = True
             voice.speak("A.R.I.S. inicializado. Todos os sistemas operacionais.")
+            self._is_speaking = False
 
         # Status do provider
         provider_status = self._llm_router.get_status()
@@ -579,6 +856,9 @@ class Aris:
         self._logger.info("Sistema pronto para recebimento de comandos.")
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="aris-llm")
 
+        # Parte 8: ponte do agente (desligada por padrão; ARIS_AGENT_ENABLED)
+        self._agent_bridge = self._build_agent_bridge()
+
         while self._running:
             try:
                 # Input: fila assincrona, teclado ou microfone
@@ -589,6 +869,10 @@ class Aris:
 
                 if not user_input.strip():
                     continue
+
+                # Mostrar entrada do usuário com cor distinta
+                ArisUI.show_user_input(user_input)
+                self._publish_aris_status("executing")
 
                 # Saudação contextual na primeira interação da sessão (desativada)
                 # if self._greeting.should_greet():
@@ -609,13 +893,60 @@ class Aris:
                     self._mic_mode = True if self._hybrid_voice._recognizer is not None else False
                     self._sync_hardware_state(SystemState.IDLE)
                     if self._mic_mode:
-                        print("  🎙️ Modo voz ativado. Fale seus comandos. Digite 'modo texto' para voltar a digitar.")
+                        ArisUI.show_info("Modo voz ativado. Fale seus comandos. Digite 'modo texto' para voltar a digitar.")
                     else:
-                        print("  ⚠️ Sem microfone disponível. Instale: pip install SpeechRecognition pyaudio")
+                        ArisUI.show_warning("Sem microfone disponível. Instale: pip install SpeechRecognition pyaudio")
                     continue
                 if ui in ("modo texto", "voz off", "mic off", "desativar mic"):
                     self._mic_mode = False
-                    print("  ⌨️ Modo digitação ativado.")
+                    ArisUI.show_info("Modo digitação ativado.")
+                    continue
+
+                # Configuração de microfone
+                if ui in ("mic list", "microfone lista", "listar microfones", "list mics"):
+                    self._list_microphones()
+                    continue
+                if ui.startswith("mic select ") or ui.startswith("microfone selecionar "):
+                    parts = ui.split()
+                    if len(parts) >= 3:
+                        try:
+                            idx = int(parts[2])
+                            self._select_microphone(idx)
+                        except ValueError:
+                            ArisUI.show_error("Uso: mic select <número>")
+                    else:
+                        ArisUI.show_error("Uso: mic select <número>")
+                    continue
+                if ui.startswith("mic threshold ") or ui.startswith("microfone threshold "):
+                    parts = ui.split()
+                    if len(parts) >= 3:
+                        try:
+                            threshold = float(parts[2])
+                            self._set_energy_threshold(threshold)
+                        except ValueError:
+                            ArisUI.show_error("Uso: mic threshold <valor>")
+                    else:
+                        ArisUI.show_error("Uso: mic threshold <valor>")
+                    continue
+                if ui.startswith("mic vad ") or ui.startswith("microfone vad "):
+                    parts = ui.split()
+                    if len(parts) >= 3:
+                        try:
+                            level = int(parts[2])
+                            if 0 <= level <= 3:
+                                self._set_vad_aggressiveness(level)
+                            else:
+                                ArisUI.show_error("VAD deve ser 0-3")
+                        except ValueError:
+                            ArisUI.show_error("Uso: mic vad <0-3>")
+                    else:
+                        ArisUI.show_error("Uso: mic vad <0-3>")
+                    continue
+                if ui in ("mic status", "microfone status", "mic config"):
+                    self._show_mic_config()
+                    continue
+                if ui in ("mic restart", "microfone reiniciar"):
+                    self._restart_continuous_voice()
                     continue
 
                 # Safety: exit sempre funciona
@@ -635,7 +966,55 @@ class Aris:
                     self._show_help()
                     continue
 
+                # Gate de confirmação do WhatsApp: com rascunho pendente,
+                # só uma resposta afirmativa real envia; negativas bloqueiam.
+                # Roda ANTES de reflexo/LLM — "não" nunca vira outro intent.
+                wa_reply = None
+                try:
+                    from modules.whatsapp import confirmation_reply
+                    wa_reply = confirmation_reply(user_input)
+                except Exception as e:
+                    self._logger.warning(f"WhatsApp gate: {e}")
+                if wa_reply is not None:
+                    self._cognitive_trace(user_input, "WHATSAPP_CONFIRM", wa_reply[:40])
+                    self._interpreter.update_context(user_input, wa_reply, [])
+                    ArisUI.show_aris_response(wa_reply, from_reflex=False)
+                    if voice.enabled and "http" not in wa_reply.lower():
+                        self._sync_hardware_state(SystemState.SPEAKING)
+                        self._is_speaking = True
+                        voice.speak(wa_reply)
+                        self._is_speaking = False
+                        self._sync_hardware_state(SystemState.IDLE)
+                    self._track_aris_question(wa_reply)
+                    continue
+
                 # Neural Core: caminho determinístico (sem LLM)
+                # Primeiro tenta Reflex Layer (mini-agentes rápidos)
+                reflex_result = None
+                if self._reflex_layer:
+                    try:
+                        reflex_result = self._reflex_layer.process(user_input, origin=msg_origin)
+                    except Exception as e:
+                        self._logger.error(f"ReflexLayer: falha no processamento ({e})")
+
+                if reflex_result and reflex_result.handled:
+                    self._cognitive_trace(user_input, "REFLEX", f"agent={reflex_result.module}/{reflex_result.action}")
+                    # Registrar no contexto da conversa
+                    self._interpreter.update_context(user_input, reflex_result.response, [])
+                    if reflex_result.response:
+                        ArisUI.show_aris_response(reflex_result.response, from_reflex=True)
+                        if voice.enabled and reflex_result.speak:
+                            if "http" not in reflex_result.response.lower():
+                                self._sync_hardware_state(SystemState.SPEAKING)
+                                self._is_speaking = True
+                                voice.speak(reflex_result.response)
+                                self._is_speaking = False
+                                self._sync_hardware_state(SystemState.IDLE)
+                        self._track_aris_question(reflex_result.response)
+                    self._face_command_happy()
+                    self._maybe_proactive(voice)
+                    continue
+
                 try:
                     neural_result = self._neural.process(user_input)
                 except Exception as e:
@@ -648,18 +1027,49 @@ class Aris:
                     reply_text = neural_result.output or neural_result.error or ""
                     self._interpreter.update_context(user_input, reply_text, [])
                     if neural_result.output:
-                        ArisUI.show_response(neural_result.output)
+                        ArisUI.show_aris_response(neural_result.output, from_reflex=False)
                         if voice.enabled:
                             # Não falar texto que contenha URLs (evita ler link letra por letra)
                             if "http" not in neural_result.output.lower():
                                 self._sync_hardware_state(SystemState.SPEAKING)
+                                self._is_speaking = True
                                 voice.speak(neural_result.output)
+                                self._is_speaking = False
                                 self._sync_hardware_state(SystemState.IDLE)
                         self._track_aris_question(neural_result.output)
                     elif neural_result.error:
                         ArisUI.show_error(neural_result.error)
+                    self._face_command_happy()
                     self._maybe_proactive(voice)
                     continue
+
+                # Parte 8: roteamento para o agente novo (desligado por padrão).
+                # processar() devolve None => o fluxo antigo (answer-learning →
+                # LLM antigo) segue intacto. Qualquer erro vira None + log.
+                if self._agent_bridge is not None:
+                    resposta_agente = None
+                    try:
+                        resposta_agente = self._agent_bridge.processar(
+                            user_input, origin=msg_origin
+                        )
+                    except Exception as e:
+                        self._logger.error(
+                            f"Agente: falha ({e}); seguindo o caminho atual"
+                        )
+                    if resposta_agente is not None:
+                        self._cognitive_trace(user_input, "AGENTE", resposta_agente[:40])
+                        self._interpreter.update_context(user_input, resposta_agente, [])
+                        ArisUI.show_aris_response(resposta_agente, from_reflex=False)
+                        if voice.enabled and "http" not in resposta_agente.lower():
+                            self._sync_hardware_state(SystemState.SPEAKING)
+                            self._is_speaking = True
+                            voice.speak(resposta_agente)
+                            self._is_speaking = False
+                            self._sync_hardware_state(SystemState.IDLE)
+                        self._track_aris_question(resposta_agente)
+                        self._face_command_happy()
+                        self._maybe_proactive(voice)
+                        continue
 
                 # Resposta curta na sequência de uma pergunta da própria
                 # ARIS: aprende a resposta em vez de perder o contexto
@@ -673,6 +1083,27 @@ class Aris:
                     except Exception as e:
                         if self._logger:
                             self._logger.warning(f"Falha ao aprender resposta: {e}")
+
+                # Verificar feedback do usuário sobre status do PC (override de modo)
+                pc_feedback = self._interpreter.handle_pc_status_feedback(user_input)
+                if pc_feedback:
+                    response_text, _ = pc_feedback
+                    # Aplicar override no ModeManager
+                    from core.neural.mode import get_mode_manager
+                    mm = get_mode_manager()
+                    msg_lower = user_input.lower()
+                    pc_online = any(p in msg_lower for p in ["ligado", "online"])
+                    mm.apply_user_feedback(pc_online, reason="user_feedback_explicit")
+
+                    ArisUI.show_aris_response(response_text, from_reflex=False)
+                    if voice.enabled:
+                        self._sync_hardware_state(SystemState.SPEAKING)
+                        self._is_speaking = True
+                        voice.speak(response_text)
+                        self._is_speaking = False
+                        self._sync_hardware_state(SystemState.IDLE)
+                    self._track_aris_question(response_text)
+                    continue
 
                 # Enviar tudo para a IA interpretar
                 chat = self._multi_chat if self._multi_chat.available else self._chat
@@ -699,16 +1130,23 @@ class Aris:
                     # Extrair intencoes (suporta multiplos comandos)
                     clean_response, intents = self._interpreter.parse_ai_response(response)
 
+                    # Remover saudações duplicadas/genéricas da resposta do LLM
+                    clean_response = self._clean_duplicate_greetings(clean_response)
+
                     # Mostrar quantas acoes foram detectadas
                     if len(intents) > 1:
                         ArisUI.show_actions_count(len(intents))
 
                     # Executar todas as intencoes na ordem
                     spoken_parts = []
+                    if intents:
+                        self._publish_aris_status("executing")
                     for intent in intents:
                         part = self._execute_intent(intent, origin=msg_origin)
                         if part:
                             spoken_parts.append(str(part))
+                    if intents:
+                        self._face_command_happy()
 
                     # Resposta completa (texto natural + resultados das ações)
                     speak_text = clean_response or ""
@@ -726,11 +1164,13 @@ class Aris:
 
                     # Mostrar resposta formatada
                     if clean_response:
-                        ArisUI.show_response(clean_response)
+                        ArisUI.show_aris_response(clean_response, from_reflex=False)
 
                     if voice.enabled and speak_text and "http" not in speak_text.lower():
                         self._sync_hardware_state(SystemState.SPEAKING)
+                        self._is_speaking = True
                         voice.speak(speak_text)
+                        self._is_speaking = False
                     self._track_aris_question(speak_text)
 
                     # Estado: idle
@@ -798,6 +1238,8 @@ class Aris:
         # Notificar ESP32
         if self._hardware.connected:
             self._hardware.set_state(SystemState.WARNING)
+        # Timer = atenção: olhos em "alert"
+        eyes_bridge.set_state(SystemState.WARNING.value)
 
     # ── Botão ESP32 callbacks ───────────────────────────────
 
@@ -845,12 +1287,131 @@ class Aris:
         result = self._hardware.start()
         print(f"  {result}")
 
+    # ── Voice callbacks ──────────────────────────────────────
+
+    def _on_voice_transcript(self, transcript: str) -> None:
+        """Callback chamado quando a voz contínua detecta uma transcrição.
+
+        - Toca bip de wake word
+        - Implementa barge-in: para TTS se estiver falando
+        """
+        # Barge-in: se ARIS está falando, parar imediatamente
+        if self._is_speaking:
+            self._stop_voice()
+            self._is_speaking = False
+
+        # Bip de wake word
+        try:
+            ArisUI.show_wake_beep()
+        except Exception:
+            pass
+
+        # Ouvindo o usuário: olhos em "listening"
+        eyes_bridge.set_state("listening")
+
+    def _on_double_clap(self) -> None:
+        """Callback disparado ao detectar 2 palmas rápidas.
+
+        Toca MP3 de intro (fade-in) + fala linha estilo JARVIS.
+        """
+        if self._logger:
+            self._logger.info("Duas palmas detectadas - disparando intro JARVIS")
+
+        # Barge-in: parar TTS se estiver falando
+        if self._is_speaking:
+            self._stop_voice()
+            self._is_speaking = False
+
+        # Tocar MP3 com fade-in (pygame)
+        try:
+            import pygame
+            pygame.mixer.init()
+            mp3_path = self._settings.BASE_DIR / "assets" / "jarvis_intro.mp3"
+            if mp3_path.exists():
+                pygame.mixer.music.load(str(mp3_path))
+                pygame.mixer.music.set_volume(0.7)
+                pygame.mixer.music.play()
+                # Fade-in simples
+                for vol in range(0, 71, 10):
+                    pygame.mixer.music.set_volume(vol / 100)
+                    pygame.time.wait(30)
+        except Exception as e:
+            if self._logger:
+                self._logger.debug(f"MP3 intro falhou (pode não existir): {e}")
+
+        # Falar linha JARVIS (usa HybridVoice se disponível)
+        jarvis_line = "Bom dia, senhor. Todos os sistemas operacionais."
+        voice = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
+        if voice.enabled:
+            self._is_speaking = True
+            voice.speak(jarvis_line)
+            self._is_speaking = False
+
+    def _stop_voice(self) -> None:
+        """Para qualquer síntese de voz em andamento (TTS)."""
+        try:
+            if self._hybrid_voice and self._hybrid_voice.enabled:
+                self._hybrid_voice.stop()
+        except Exception:
+            pass
+        try:
+            if self._voice and self._voice.enabled:
+                self._voice.stop()
+        except Exception:
+            pass
+
     # ── Estado visual → ESP32 ───────────────────────────────
 
     def _sync_hardware_state(self, state: SystemState) -> None:
         """Sincroniza estado do ARIS com ESP32."""
         if self._hardware.connected:
             self._hardware.set_state(state)
+        self._publish_aris_status(state)
+        # ARIS Eyes: o mesmo estado vai para os olhos na tela. A ponte é
+        # não-bloqueante e nunca lança (utils/eyes_bridge.py).
+        eyes_bridge.set_state(
+            getattr(state, "value", str(state)),
+            speech_level=getattr(getattr(self, "_hybrid_voice", None), "_volume", None),
+        )
+
+    def _publish_aris_status(self, state) -> None:
+        """Publica ``aris_status`` — o mesmo evento que o HUD consome.
+
+        A matriz de LED assina esse evento; estados fora do vocabulário do
+        HUD (warning, offline, ...) são ignorados para não inventar caras.
+        """
+        value = getattr(state, "value", state)
+        if not isinstance(value, str) or value not in HUD_STATES:
+            return
+        previous = self._last_aris_status
+        self._last_aris_status = value
+        try:
+            self._neural.event_bus.publish(Event(
+                event_type="aris_status",
+                source="aris",
+                payload={"state": value},
+                priority=50,
+                confidence=1.0,
+            ))
+        except Exception:
+            pass
+        face = getattr(self, "_face_matrix", None)
+        if face is not None and value == "idle" and previous not in (None, "idle"):
+            # De vez em quando, sozinho, ao voltar ao repouso
+            try:
+                face.maybe_happy(probability=0.06, hold=1.5)
+            except Exception:
+                pass
+
+    def _face_command_happy(self) -> None:
+        """Feliz às vezes quando um comando foi executado (preferência do usuário)."""
+        face = getattr(self, "_face_matrix", None)
+        if face is None:
+            return
+        try:
+            face.maybe_happy(probability=0.5, hold=1.5)
+        except Exception:
+            pass
 
     def _show_help(self) -> None:
         """Exibe ajuda com todos os comandos disponiveis."""
@@ -983,6 +1544,58 @@ class Aris:
         words = text.split()
         return 1 <= len(words) <= 3
 
+    def _clean_duplicate_greetings(self, text: str) -> str:
+        """Remove saudações duplicadas/genéricas da resposta do LLM.
+
+        O LLM às vezes gera múltiplas saudações empilhadas (ex.: 'Oi! Oi! Oi! ...').
+        Esta função remove repetições mantendo apenas a primeira ocorrência.
+        """
+        import re
+        if not text:
+            return text
+
+        # Padrões de saudação genérica (início, meio, fim)
+        greeting_patterns = [
+            r"(?:^|\s)(?:oi|olá|eai|e\s*ai|fala|bom\s*dia|boa\s*tarde|boa\s*noite|hey|hello|hi|salve)[\s!.,]*",
+        ]
+
+        # Encontrar todas as ocorrências
+        matches = []
+        for pattern in greeting_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                matches.append((match.start(), match.end(), match.group().strip()))
+
+        if len(matches) <= 1:
+            return text
+
+        # Ordenar por posição
+        matches.sort(key=lambda x: x[0])
+
+        # Manter apenas a primeira saudação, remover as subsequentes
+        result_parts = []
+        last_end = 0
+        first_greeting_kept = False
+
+        for start, end, matched in matches:
+            if not first_greeting_kept:
+                # Manter a primeira saudação (incluir texto antes dela)
+                result_parts.append(text[last_end:end])
+                first_greeting_kept = True
+                last_end = end
+            else:
+                # Pular saudação duplicada - não adicionar nada, apenas mover last_end
+                last_end = end
+
+        # Adicionar o restante do texto
+        result_parts.append(text[last_end:])
+
+        # Também limpar saudações repetidas no final do texto
+        cleaned = "".join(result_parts)
+        # Remover saudações finais duplicadas
+        cleaned = re.sub(r'(?:oi|olá|eai|fala|bom\s*dia|boa\s*tarde|boa\s*noite|hey|hello|hi|salve)[\s!.,]*$', '', cleaned, flags=re.IGNORECASE)
+
+        return cleaned.strip()
+
     def _learn_answer(self, text: str, voice) -> bool:
         """Guarda a resposta curta do usuário à pergunta recém-feita."""
         question = self._last_aris_question or ""
@@ -1016,10 +1629,122 @@ class Aris:
         ArisUI.show_response(msg)
         if voice.enabled:
             self._sync_hardware_state(SystemState.SPEAKING)
+            self._is_speaking = True
             voice.speak(msg)
+            self._is_speaking = False
             self._sync_hardware_state(SystemState.IDLE)
         self._last_aris_question = None
         return True
+
+    # ── Microfone config ───────────────────────────────────────
+
+    def _list_microphones(self) -> None:
+        """Lista microfones disponíveis."""
+        try:
+            import pyaudio
+            p = pyaudio.PyAudio()
+            print(f"\n  {Terminal.CYAN}Microfones disponíveis:{Terminal.RESET}")
+            found = False
+            for i in range(p.get_device_count()):
+                info = p.get_device_info_by_index(i)
+                if info['maxInputChannels'] > 0:
+                    name = info['name']
+                    ch = info['maxInputChannels']
+                    rate = int(info['defaultSampleRate'])
+                    default = " (padrão)" if i == p.get_default_input_device_info()['index'] else ""
+                    print(f"  [{i}] {name} — {ch}ch @ {rate}Hz{default}")
+                    found = True
+            if not found:
+                ArisUI.show_warning("Nenhum microfone encontrado")
+            p.terminate()
+        except Exception as e:
+            ArisUI.show_error(f"Erro ao listar microfones: {e}")
+
+    def _select_microphone(self, device_index: int) -> None:
+        """Seleciona microfone e reinicia sensor de voz contínua."""
+        try:
+            import pyaudio
+            p = pyaudio.PyAudio()
+            info = p.get_device_info_by_index(device_index)
+            if info['maxInputChannels'] == 0:
+                ArisUI.show_error(f"Dispositivo {device_index} não tem entrada de áudio")
+                p.terminate()
+                return
+            name = info['name']
+            p.terminate()
+
+            # Salvar preferência
+            object.__setattr__(self._settings, "MIC_DEVICE_INDEX", device_index)
+            os.environ["ARIS_MIC_DEVICE_INDEX"] = str(device_index)
+
+            ArisUI.show_info(f"Microfone selecionado: [{device_index}] {name}")
+            ArisUI.show_info("Reiniciando sensor de voz contínua...")
+            self._restart_continuous_voice()
+        except Exception as e:
+            ArisUI.show_error(f"Erro ao selecionar microfone: {e}")
+
+    def _set_energy_threshold(self, threshold: float) -> None:
+        """Ajusta threshold de energia para detecção de fala."""
+        try:
+            object.__setattr__(self._settings, "ENERGY_THRESHOLD", threshold)
+            os.environ["ARIS_ENERGY_THRESHOLD"] = str(threshold)
+            if self._continuous_voice and hasattr(self._continuous_voice, '_config'):
+                # Atualizar config em runtime (precisa reiniciar para efeito total)
+                object.__setattr__(self._continuous_voice._config, "energy_threshold", threshold)
+            ArisUI.show_info(f"Threshold de energia ajustado para: {threshold}")
+            ArisUI.show_info("Reinicie o sensor com 'mic restart' para aplicar completamente")
+        except Exception as e:
+            ArisUI.show_error(f"Erro ao ajustar threshold: {e}")
+
+    def _set_vad_aggressiveness(self, level: int) -> None:
+        """Ajusta agressividade do VAD (0-3)."""
+        try:
+            if not 0 <= level <= 3:
+                ArisUI.show_error("VAD deve ser entre 0 e 3")
+                return
+            object.__setattr__(self._settings, "VAD_AGGRESSIVENESS", level)
+            os.environ["ARIS_VAD_AGGRESSIVENESS"] = str(level)
+            if self._continuous_voice and self._continuous_voice._vad:
+                self._continuous_voice._vad = webrtcvad.Vad(level)
+            ArisUI.show_info(f"VAD agressividade ajustado para: {level}")
+        except Exception as e:
+            ArisUI.show_error(f"Erro ao ajustar VAD: {e}")
+
+    def _show_mic_config(self) -> None:
+        """Mostra configuração atual do microfone."""
+        print(f"\n  {Terminal.CYAN}Configuração do Microfone:{Terminal.RESET}")
+        print(f"  Microfone contínuo: {'Ativo' if self._continuous_voice and self._continuous_voice.enabled else 'Inativo'}")
+        print(f"  Disponível: {'Sim' if self._continuous_voice and self._continuous_voice.available else 'Não'}")
+        if self._continuous_voice:
+            cfg = self._continuous_voice._config
+            print(f"  Wake words: {cfg.wake_words}")
+            print(f"  Energy threshold: {cfg.energy_threshold}")
+            print(f"  VAD aggressiveness: {cfg.vad_aggressiveness}")
+            print(f"  Warmup frames: {cfg.warmup_frames}")
+            print(f"  Min speech: {cfg.min_speech_ms}ms")
+            print(f"  Silence timeout: {cfg.silence_timeout_ms}ms")
+            print(f"  STT model: {cfg.stt_model}")
+            print(f"  Device index: {getattr(self._settings, 'MIC_DEVICE_INDEX', 'padrão do sistema')}")
+
+    def _restart_continuous_voice(self) -> None:
+        """Reinicia o sensor de voz contínua com nova configuração."""
+        if not self._continuous_voice:
+            ArisUI.show_warning("Sensor de voz contínua não disponível")
+            return
+        try:
+            ArisUI.show_info("Parando sensor...")
+            self._continuous_voice.stop()
+            time.sleep(0.5)
+            ArisUI.show_info("Iniciando sensor...")
+            # Recriar com nova config se device index mudou
+            device_index = getattr(self._settings, 'MIC_DEVICE_INDEX', None)
+            if device_index is not None:
+                # O sensor usa PyAudio default, mas podemos setar via env
+                os.environ["ARIS_MIC_DEVICE_INDEX"] = str(device_index)
+            self._continuous_voice.start()
+            ArisUI.show_success("Sensor de voz contínua reiniciado")
+        except Exception as e:
+            ArisUI.show_error(f"Erro ao reiniciar sensor: {e}")
 
     def _restart(self, delay: float = 1.8) -> None:
         """Reinicia a A.R.I.S.: abre um novo cmd com ela rodando e encerra esta.
@@ -1071,39 +1796,133 @@ class Aris:
                     host=cll1_host,
                     port=cll1_port,
                     token=cll1_token,
-                    message_callback=self._on_cll1_message,
+                    on_message=self._on_cll1_message,
                     logger=self._logger,
                 )
                 self._cll1_server.start()
                 self._container.set("cll1.server", self._cll1_server)
-                self._logger.info(f"CLL1 Server iniciado em {cll1_host}:{cll1_port}")
+                # Log único: o CLL1Server.start() já registra o endereço.
             except Exception as e:
                 self._logger.warning(f"CLL1 Server indisponivel: {e}")
 
-            # CLL1 Heartbeat
-            try:
-                self._cll1_heartbeat = CLL1Heartbeat(
-                    client=None,  # usa CLL1Client interno via env vars
-                    interval=30,
-                    logger=self._logger,
-                )
-                self._cll1_heartbeat.start()
-                self._container.set("cll1.heartbeat", self._cll1_heartbeat)
-                self._logger.info("CLL1 Heartbeat iniciado.")
-            except Exception as e:
-                self._logger.warning(f"CLL1 Heartbeat indisponivel: {e}")
+            # CLL1 Heartbeat — só se o servidor de verdade subiu. Antes ele
+            # subia mesmo com o server falhou e spamava "'NoneType' object
+            # has no attribute 'heartbeat_status'" a cada 30s.
+            if self._cll1_server is not None:
+                try:
+                    self._cll1_heartbeat = CLL1Heartbeat(
+                        client=None,  # usa CLL1Client interno via env vars
+                        interval=30,
+                        logger=self._logger,
+                    )
+                    self._cll1_heartbeat.start()
+                    self._container.set("cll1.heartbeat", self._cll1_heartbeat)
+                    self._logger.info("CLL1 Heartbeat iniciado.")
+                except Exception as e:
+                    self._logger.warning(f"CLL1 Heartbeat indisponivel: {e}")
+            else:
+                self._logger.info("CLL1 Heartbeat nao iniciado (server indisponivel).")
         else:
             self._logger.info("CLL1 desabilitado (CLL1_TOKEN nao definido).")
 
-    def _on_cll1_message(self, message: dict) -> None:
-        """Callback para mensagens recebidas do CLL1."""
-        text = message.get("text", "")
+    def _sync_personality(self) -> None:
+        """Sincroniza personalidade com CLL1 (Edge) via CLL1 Server broadcast."""
+        try:
+            from config.personality import ARIS_PERSONALITY
+
+            if self._sync_engine:
+                sync_data = self._sync_engine.get_personality_for_sync(ARIS_PERSONALITY)
+                # Broadcast para CLL1 conectado
+                if self._cll1_server:
+                    sent = self._cll1_server.broadcast({
+                        "type": "personality_sync",
+                        "payload": sync_data,
+                    })
+                    if sent > 0:
+                        self._logger.info(f"Personalidade sincronizada com {sent} cliente(s) CLL1")
+
+                # Também salvar localmente para painel web acessar
+                personality_path = Path("D:/ARIS_MEMORY/personality_sync.md")
+                personality_path.parent.mkdir(parents=True, exist_ok=True)
+                personality_path.write_text(ARIS_PERSONALITY, encoding="utf-8")
+                self._logger.info("Personalidade salva para painel web")
+
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Sincronização de personalidade falhou: {e}")
+
+    def _on_cll1_message(self, text: str, origin_info: dict) -> None:
+        """Callback p/ mensagens do CLL1 — assinatura (text, origin_info).
+
+        O CLL1Server chama ``on_message(text, origin_info)``. Repacketa em
+        um dict p/ ``MessageOrigin.from_dict`` e injeta no pipeline.
+        """
+        if text == "__sync_push__":
+            return  # payload de sync não é comando de conversa
         if text:
-            origin = MessageOrigin.from_dict(message)
+            payload = {"text": text, **(origin_info or {})}
+            origin = MessageOrigin.from_dict(payload)
             self.send_message(text, origin=origin)
 
+    def _build_agent_bridge(self):
+        """Parte 8: monta a ponte do agente; falha/desligado => None.
+
+        Interruptor ARIS_AGENT_ENABLED (padrão desligado). Nunca derruba a
+        ARIS: qualquer import/construção quebrado vira aviso + caminho antigo.
+        """
+        try:
+            from aris_agent.bridge import build_bridge
+
+            voz = self._hybrid_voice if self._hybrid_voice.enabled else self._voice
+
+            def falar(texto: str, *, sync: bool = False) -> None:
+                # sync=True na confirmação (a fala precisa terminar antes de
+                # ouvir); status de ferramenta sai assíncrono para não travar.
+                if not voz.enabled or not texto:
+                    return
+                self._is_speaking = True
+                try:
+                    voz.speak(texto, async_mode=not sync)
+                finally:
+                    self._is_speaking = False
+
+            def ouvir(timeout_s: float) -> str | None:
+                from aris_agent.bridge.voz import entrada_com_tempo, segundos_para_ouvinte
+
+                if self._mic_mode:
+                    try:
+                        return self._hybrid_voice.listen(
+                            timeout=segundos_para_ouvinte(timeout_s)
+                        )
+                    except Exception:
+                        return None  # microfone falhou: nega (timeout = negar)
+                return entrada_com_tempo(timeout_s, prompt="Confirmar (sim/não): ")
+
+            ponte = build_bridge(falar=falar, ouvir=ouvir)
+            if self._logger:
+                if ponte is not None:
+                    self._logger.info(
+                        "Ponte do agente ativa (ARIS_AGENT_ENABLED=true)."
+                    )
+                else:
+                    self._logger.info(
+                        "Ponte do agente desligada/indisponível (ARIS_AGENT_ENABLED)."
+                    )
+            return ponte
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"Ponte do agente indisponível: {e}")
+            return None
+
     def shutdown(self) -> None:
-        """Encerra o A.R.I.S. de forma limpa."""
+        """Encerra o A.R.I.S. de forma limpa.
+
+        Idempotente: uma 2ª chamada (ex.: 'exit' + fim do loop) não repete
+        a sequência de parada nem duplica os logs de encerramento.
+        """
+        if getattr(self, "_shutdown_done", False):
+            return
+        self._shutdown_done = True
         self._running = False
 
         # Publicar evento de encerramento no Neural Core
@@ -1120,10 +1939,74 @@ class Aris:
         if hasattr(self, '_executor'):
             self._executor.shutdown(wait=False)
 
+        # Parte 8: cancelar execução do agente em andamento (se houver)
+        if getattr(self, "_agent_bridge", None):
+            try:
+                self._agent_bridge.parar()
+            except Exception:
+                pass
+
         # Parar percepção (sensores em threads daemon)
         if getattr(self, "_perception", None):
             try:
                 self._perception.stop()
+            except Exception:
+                pass
+
+        # Parar voz contínua
+        if getattr(self, "_continuous_voice", None):
+            try:
+                self._continuous_voice.stop()
+                self._logger.info("Voz contínua parada")
+            except Exception:
+                pass
+
+        # Parar voz híbrida (TTS + seletor de microfone) e liberar o mixer.
+        # Sem isso, no Linux o processo sai com o SDL/mixer ainda ativo e o
+        # pygame parachute derruba um SIGABRT (segfault) no encerramento.
+        if getattr(self, "_hybrid_voice", None):
+            try:
+                self._hybrid_voice.stop()
+            except Exception:
+                pass
+        try:
+            import pygame
+
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                pygame.mixer.quit()
+        except Exception:
+            pass
+
+        # Parar detector de palmas
+        if getattr(self, "_clap_detector", None):
+            try:
+                self._clap_detector.stop()
+                self._logger.info("Clap detector parado")
+            except Exception:
+                pass
+
+        # Parar Proactive Engine
+        if getattr(self, "_proactive_engine", None):
+            try:
+                self._proactive_engine.stop()
+                self._logger.info("Proactive Engine parado")
+            except Exception:
+                pass
+
+        # Parar matriz de LED 8x8
+        if getattr(self, "_face_matrix", None):
+            try:
+                self._face_matrix.stop()
+            except Exception:
+                pass
+
+        # Parar Reflex Layer
+        if getattr(self, "_reflex_layer", None):
+            try:
+                # ReflexLayer não tem stop(), apenas limpar referências
+                self._reflex_layer = None
+                self._logger.info("Reflex Layer parada")
             except Exception:
                 pass
 
@@ -1143,6 +2026,9 @@ class Aris:
         if self._hardware.connected:
             self._hardware.set_state(SystemState.OFFLINE)
             self._hardware.stop()
+
+        # Olhos dormem junto com a ARIS (independe do ESP32)
+        eyes_bridge.set_state(SystemState.OFFLINE.value)
 
         # Fechar memória cognitiva
         if getattr(self, "_memory_service", None):

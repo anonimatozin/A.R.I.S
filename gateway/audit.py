@@ -11,6 +11,21 @@ _audit_log: list[dict[str, Any]] = []
 _MAX_ENTRIES = 1000
 
 
+_REDACT_KEYS = ("groq_api_key", "api_key", "bot_token", "discord", "cll1_token",
+                  "password", "secret", "passwd", "bearer")
+
+
+def _redact(text: str) -> str:
+    import re as _re
+    t = text or ""
+    # GROQ gsk_..., Discord tokens, Bearer
+    t = _re.sub(r"gsk_[A-Za-z0-9_\-]{8,}", "gsk_***", t)
+    t = _re.sub(r"(?i)(bearer\s+)[A-Za-z0-9_\-\.]{8,}", r"\1***", t)
+    t = _re.sub(r"(?i)(api[_-]?key\s*[:=]\s*['\"]?)[^'\"\s,}]{6,}", r"\1***", t)
+    t = _re.sub(r"(?i)(token\s*[:=]\s*['\"]?)[^'\"\s,}]{6,}", r"\1***", t)
+    return t[:200]
+
+
 def log_operation(
     operation: str,
     *,
@@ -24,9 +39,9 @@ def log_operation(
         "ts": time.time(),
         "op": operation,
         "user": user,
-        "target": target,
+        "target": _redact(target),
         "result": result,
-        "detail": detail[:200],
+        "detail": _redact(detail),
         "ms": round(duration_ms, 1),
     }
     _audit_log.append(entry)

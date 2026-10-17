@@ -1,0 +1,10 @@
+# Parte 8 — Integração (ponte entre a ARIS antiga e o agente)
+# Sem dependências externas NOVAS: o bridge (aris_agent/bridge/) usa só a
+# biblioteca padrão (logging, os, sqlite3, threading, unicodedata) e as peças
+# das Partes 0–7 (httpx da parte1, send2trash da parte2, etc. — já instaladas).
+#
+# A integração em si religa o código ANTIGO (edge-tts, SpeechRecognition,
+# psutil...) às requirements/parteN.txt; a consolidação entrou no
+# requirements.txt da raiz (seção "Parte 8 — Integração do agente").
+#
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

@@ -1,0 +1,9 @@
+# Parte 3 — Ferramentas de web (pesquisa, leitura e navegador)
+# Todas já instaladas no ambiente do projeto (não rodar pip install agora).
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.
+
+trafilatura>=1.8.0     # extração do texto principal de HTML (com fallback p/ BeautifulSoup)
+ddgs>=9.0.0            # busca DuckDuckGo sem chave de API (backend padrão)
+beautifulsoup4>=4.12.0 # fallback de extração de texto e coleta de links
+requests>=2.31.0       # HTTP com timeout, limite de bytes e redirects revalidados
+playwright>=1.40.0     # navegador controlado (browser_*); binário: `playwright install chromium` (~130 MB)

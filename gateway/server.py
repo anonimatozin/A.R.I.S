@@ -11,6 +11,7 @@ import threading
 from gateway.auth import init_auth
 from gateway.core import CoreOps
 from gateway.web import start_http_server
+from gateway.events import set_event_bus
 
 MAX_REQUEST_SIZE = 20 * 1024 * 1024
 
@@ -66,9 +67,21 @@ def run_gateway(
     host: str = "0.0.0.0",
     tcp_port: int = 8765,
     http_port: int = 8766,
+    event_bus: object | None = None,
+    logger: object | None = None,
 ) -> None:
     db_path = os.path.join(base_dir, "data", "aris.db")
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+    # Initialize version tracking
+    try:
+        from core.version import initialize_version
+        initialize_version()
+    except Exception:
+        pass
+
+    if event_bus is not None:
+        set_event_bus(event_bus, logger)
 
     init_auth(base_dir)
     core = CoreOps(base_dir, db_path)

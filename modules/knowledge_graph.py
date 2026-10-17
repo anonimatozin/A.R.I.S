@@ -106,9 +106,9 @@ class KnowledgeGraph:
             import shutil
             shutil.move(str(graph_file), str(backup_path))
 
-            print(f"Migração KG JSON→SQLite: {count_e} entidades, {count_r} relações, {count_f} fatos.")
+            print(f"Migracao KG JSON->SQLite: {count_e} entidades, {count_r} relacoes, {count_f} fatos.")
         except Exception as e:
-            print(f"Erro na migração KG JSON→SQLite: {e}")
+            print(f"Erro na migracao KG JSON->SQLite: {e}")
 
     # ── Conversão Dataclass ↔ Row ──────────────────────────────
 

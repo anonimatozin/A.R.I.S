@@ -4,6 +4,9 @@
 
 cd ~/cll1
 
+# Wake lock - manter Termux ativo com tela off
+termux-wake-lock
+
 # Esperar rede
 sleep 10
 

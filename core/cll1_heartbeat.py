@@ -53,6 +53,16 @@ class CLL1Heartbeat:
         interval: float = 30.0,
         logger: Logger | None = None,
     ) -> None:
+        # client=None: cria o CLL1Client interno via env vars (como o
+        # chamador em core/aris.py assume). Sem isso, _do_heartbeat batia
+        # em "'NoneType' object has no attribute 'heartbeat_status'".
+        if client is None:
+            try:
+                from core.cll1_client import CLL1Client
+
+                client = CLL1Client()
+            except Exception:
+                client = None
         self._client = client
         self._node_id = node_id
         self._interval = max(5.0, interval)
@@ -115,9 +125,13 @@ class CLL1Heartbeat:
 
     def _loop(self) -> None:
         """Loop principal do heartbeat (executa em thread)."""
+        if self._logger:
+            self._logger.info(f"CLL1 Heartbeat loop iniciado (intervalo: {self._interval}s)")
         while not self._stop_event.is_set():
             self._do_heartbeat()
             self._stop_event.wait(self._interval)
+        if self._logger:
+            self._logger.info("CLL1 Heartbeat loop encerrado")
 
     def _do_heartbeat(self) -> dict[str, Any]:
         """Executa um heartbeat e atualiza estado."""
@@ -140,7 +154,7 @@ class CLL1Heartbeat:
 
             if self._logger:
                 self._logger.debug(
-                    f"CLL1 Heartbeat OK: {response.get('ok', False)}"
+                    f"CLL1 Heartbeat OK: {response.get('ok', False)} (total: {self._state.total_heartbeats})"
                 )
 
             return response
@@ -155,7 +169,7 @@ class CLL1Heartbeat:
             if self._logger:
                 self._logger.warning(
                     f"CLL1 Heartbeat falhou "
-                    f"(tentativa {self._state.consecutive_failures}): {e}"
+                    f"(tentativa {self._state.consecutive_failures}/{self._state.total_failures} total): {e}"
                 )
 
             return {"ok": False, "error": str(e)}

@@ -191,6 +191,14 @@ class IntentAnalyzer:
                        "transcrever", "digitção por voz"],
             params=["action", "key", "lang"],
         )
+        self.register_module(
+            name="whatsapp",
+            description="WhatsApp: enviar e receber mensagens",
+            triggers=["whatsapp", "enviar mensagem", "mensagem", "zap", "whats",
+                       "mensagem do", "mensagem pro", "responde pro", "manda mensagem",
+                       "verifica mensagem", "ler mensagem", "conversa"],
+            params=["action", "contact", "message", "limit"],
+        )
 
     def register_module(
         self,

@@ -51,6 +51,22 @@ class DeterministicEngine:
 
     # (padrões regex, module, action, extra)
     RULES: list[tuple[str, str, str, dict[str, Any]]] = [
+        # Matriz de LED 8x8 — pedido explícito do usuário (antes das regras
+        # genéricas: quem manda "mostra X na matriz" quer a matriz).
+        (
+            r"(?i)^\s*(?:ar[ií]s|ariz)?[,!.\s]*"
+            r"(?:por\s+favor\s+|pfv\s+|me\s+|pode\s+|quer\s+)?"
+            r"(?:mostra|mostre|mostrar|exibe|exiba|exibir|coloca|coloque|"
+            r"põe|poe|escreve|escreva|apresenta|apresente|manda?\s+mostrar|"
+            r"manda?\s+exibir)"
+            r"\s+(?:o\s+|a\s+|um\s+|uma\s+)?(.+?)"
+            r"\s+(?:na|no|em|para a|pra a|pro)\s+(?:a\s+)?(?:matriz|matrix|leds?)",
+            "matrix", "show", {"content": ""},
+        ),
+        (
+            r"(?i)^\s*(?:matriz|matrix|led)\s*[:=]\s*(.+)",
+            "matrix", "show", {"content": ""},
+        ),
         (r"(?i)(uso|carga|percentual)\s*(da|de)\s*(cpu)", "sys", "analyze", {}),
         (r"(?i)(cpu|processador)", "sys", "analyze", {}),
         (r"(?i)(ram|uso\s*de\s*memoria|memoria\s*(usada|livre|disponivel|total|em\s*uso)|memoria\s*do\s*sistema)", "sys", "analyze", {}),
@@ -149,6 +165,8 @@ class DeterministicEngine:
                 )
             elif action == "find" and module == "vision":
                 params["query"] = (match.group(1) or "").strip() if match.groups() else ""
+            elif action == "show" and module == "matrix":
+                params["content"] = (match.group(1) or "").strip()
 
             intent = Intent(module=module, action=action, params=params, confidence=0.9)
             if self._logger:

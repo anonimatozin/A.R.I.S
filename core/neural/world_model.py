@@ -6,6 +6,7 @@ Módulo coeso que cobre:
 - **Goals**: objetivos com status, prazo e importância
 - **Prospective Reminders**: lembretes futuros com recorrência opcional
 - **Follow-up**: detecção de prazos expirados e consultas ao usuário
+- **Calendar Integration**: consulta Google Calendar para conflitos e rotina
 
 Schema SQLite: 3 tabelas novas no banco unificado (beliefs, goals,
 prospective_reminders), criadas automaticamente.
@@ -21,6 +22,13 @@ from enum import Enum
 from typing import Any
 
 from core.memory_db import MemoryDB
+
+# Import opcional do Calendar Manager
+try:
+    from core.calendar.service import CalendarManager, CalendarEvent
+except ImportError:
+    CalendarManager = None
+    CalendarEvent = None
 
 # ── Eventos ──────────────────────────────────────────────────
 
@@ -331,11 +339,19 @@ class WorldModel:
     """World Model unificado: Beliefs, User Model, Goals, Reminders.
 
     Usa o MemoryDB existente para persistir novas tabelas.
+    Integração opcional com Google Calendar para detecção de conflitos
+    e enriquecimento de rotina.
     """
 
-    def __init__(self, db: MemoryDB, logger: Any = None) -> None:
+    def __init__(
+        self,
+        db: MemoryDB,
+        logger: Any = None,
+        calendar_manager: Any = None,
+    ) -> None:
         self._db = db
         self._logger = logger
+        self._calendar_manager = calendar_manager
         self._create_tables()
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -987,16 +1003,15 @@ class WorldModel:
     # ── Resolução de horário para reminders ───────────────────
 
     def _resolve_reminder_time(self, text: str) -> tuple[str, float, str] | None:
-        """Tenta resolver um horário para lembrete usando User Model.
+        """Tenta resolver um horário para lembrete usando User Model + Calendar.
 
         Returns:
             (remind_at_iso, confidence_boost, source) ou None se
             não há informação suficiente.
 
-        Points de extensão futura (Google Calendar integration):
-        - Este método pode ser estendido para consultar calendário real
-          via API (ex: Google Calendar) além do User Model.
-        - O parâmetro `source` já indica a fonte: "user_model", "calendar",
+        Points de extensão (Google Calendar integration):
+        - Consulta calendário real via API para detectar conflitos.
+        - O parâmetro `source` indica a fonte: "user_model", "calendar",
           ou "default" para facilitar rastreabilidade.
         """
         import re as _re
@@ -1008,7 +1023,7 @@ class WorldModel:
         if base_date is None:
             return None
 
-        # 2. Consulta User Model para rotina do usuário
+        # 2. Consulta User Model + Calendar para rotina do usuário
         routine = self._parse_routine_beliefs()
         if not routine:
             # Sem dados de rotina → não inventa horário
@@ -1019,9 +1034,36 @@ class WorldModel:
         if suggested_time is None:
             return None
 
-        # 4. Calcula confiança baseada na qualidade dos dados
-        confidence_boost = 0.3 if routine["source_count"] >= 2 else 0.15
-        source_label = f"user_model ({routine['source_count']} crenças)"
+        # 4. Google Calendar: verifica conflitos reais
+        if self._calendar_manager and CalendarManager:
+            try:
+                end_time = suggested_time + timedelta(hours=1)  # assume 1h duração
+                conflicts = self._calendar_manager.check_conflicts(
+                    suggested_time, end_time
+                )
+                if conflicts:
+                    # Tentar próximo slot livre
+                    for _ in range(3):  # tentar até 3 alternativas
+                        suggested_time += timedelta(hours=1)
+                        end_time = suggested_time + timedelta(hours=1)
+                        conflicts = self._calendar_manager.check_conflicts(
+                            suggested_time, end_time
+                        )
+                        if not conflicts:
+                            break
+                    if conflicts:
+                        # Ainda tem conflito - avisa mas retorna o horário
+                        source_label = f"calendar_conflict ({len(conflicts)} conflitos)"
+                        confidence_boost = 0.1
+                        return (suggested_time.isoformat(), confidence_boost, source_label)
+            except Exception as e:
+                if self._logger:
+                    self._logger.debug(f"Calendar conflict check failed: {e}")
+
+        # 5. Calcula confiança baseada na qualidade dos dados
+        source_count = routine.get("source_count", 0)
+        confidence_boost = 0.3 if source_count >= 2 else 0.15
+        source_label = f"user_model ({source_count} fontes)"
 
         return (suggested_time.isoformat(), confidence_boost, source_label)
 
@@ -1083,26 +1125,25 @@ class WorldModel:
         return None
 
     def _parse_routine_beliefs(self) -> dict[str, Any] | None:
-        """Extrai informações de rotina do User Model.
+        """Extrai informações de rotina do User Model + Google Calendar.
 
         Returns:
             dict com:
             - busy_periods: list of (start_hour, end_hour) tuples
             - quiet_hours: list of (start_hour, end_hour) tuples
             - preferred_hours: list of preferred hours
+            - calendar_events: list of CalendarEvent for today (if available)
             - source_count: número de crenças consultadas
             None se não há informação suficiente.
 
-        Points de extensão futura (Google Calendar integration):
-        - Este método pode ser estendido para mesclar dados do calendário
-          real com as crenças do User Model.
+        Points de extensão (Google Calendar integration):
+        - Mescla dados do calendário real com as crenças do User Model.
         - A estrutura de retorno (busy_periods, quiet_hours) é compatível
           com dados de calendário Google.
         """
         beliefs = self.search_beliefs(
             category="user_profile", query="horário", only_current=True,
         )
-        # Busca também por termos relacionados a rotina
         routine_keywords = ["aula", "trabalho", "faculdade", "universidade",
                            "hora", "horário", "horario", "rotina", "manhã",
                            "noite", "tarde", "período", "periodo"]
@@ -1114,16 +1155,13 @@ class WorldModel:
                 if b.id not in {fb.id for fb in beliefs}:
                     beliefs.append(b)
 
-        if not beliefs:
-            return None
-
         busy_periods: list[tuple[int, int]] = []
         quiet_periods: list[tuple[int, int]] = []
         preferred_hours: list[int] = []
+        calendar_events: list = []
 
         for belief in beliefs:
             text = belief.value.lower()
-            # Padrão: "aula das Xh às Yh" ou "trabalho das X às Y"
             period_match = re.search(
                 r"(?:das?|de)\s+(\d{1,2})\s*[h:]"
                 r"(?:\d{0,2})?\s*(?:às|a)\s+(\d{1,2})\s*[h:]?",
@@ -1136,7 +1174,6 @@ class WorldModel:
                     busy_periods.append((start, end))
                 continue
 
-            # Padrão: "não gosta de ser incomodado antes das Xh"
             quiet_match = re.search(
                 r"(?i)(?:n[aã]o\s+)?(?:gosta|quer|deseja)\s+.*?"
                 r"(?:antes|antes das)\s+(\d{1,2})\s*[h:]",
@@ -1147,7 +1184,6 @@ class WorldModel:
                 quiet_periods.append((0, hour))
                 continue
 
-            # Padrão: "acorda às Xh" ou "começa às Xh"
             wake_match = re.search(
                 r"(?i)(?:acorda|come[cç]a|inicia)\s+(?:às\s+)?(\d{1,2})\s*[h:]",
                 text,
@@ -1157,7 +1193,6 @@ class WorldModel:
                 quiet_periods.append((0, hour))
                 continue
 
-            # Padrão: "dorme às Xh" ou "termina às Xh"
             sleep_match = re.search(
                 r"(?i)(?:dorme|termina|encerra)\s+(?:às\s+)?(\d{1,2})\s*[h:]",
                 text,
@@ -1167,14 +1202,40 @@ class WorldModel:
                 quiet_periods.append((hour, 24))
                 continue
 
-        if not busy_periods and not quiet_periods:
+        # ── Google Calendar Integration ──
+        if self._calendar_manager and CalendarManager:
+            try:
+                today = datetime.now()
+                day_start = today.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_end = today.replace(hour=23, minute=59, second=59, microsecond=0)
+                cal_events = self._calendar_manager.list_events(
+                    time_min=day_start,
+                    time_max=day_end,
+                    max_results=50,
+                )
+                if cal_events:
+                    calendar_events = cal_events
+                    for evt in cal_events:
+                        # Converter eventos do calendário para busy_periods
+                        start_hour = evt.start.hour
+                        end_hour = evt.end.hour
+                        if evt.end.minute > 0:
+                            end_hour += 1
+                        if start_hour < end_hour:
+                            busy_periods.append((start_hour, end_hour))
+            except Exception as e:
+                if self._logger:
+                    self._logger.debug(f"Calendar query failed in routine: {e}")
+
+        if not busy_periods and not quiet_periods and not calendar_events:
             return None
 
         return {
             "busy_periods": busy_periods,
             "quiet_periods": quiet_periods,
             "preferred_hours": preferred_hours,
-            "source_count": len(beliefs),
+            "calendar_events": calendar_events,
+            "source_count": len(beliefs) + len(calendar_events),
         }
 
     def _find_free_slot(
@@ -1225,3 +1286,137 @@ class WorldModel:
             return "Entendi que é todo mês, mas em que dia?"
 
         return "Preciso de mais detalhes para agendar. Pode especificar quando?"
+
+    # ── Calendar Integration: Create Events from Goals/Reminders ──
+
+    def create_calendar_event_from_goal(
+        self,
+        goal_id: str,
+        duration_minutes: int = 60,
+        account_id: str | None = None,
+    ) -> tuple[CalendarEvent | None, list[CalendarEvent]]:
+        """Cria evento no Google Calendar a partir de um Goal.
+
+        Verifica conflitos antes de criar. Se houver conflito,
+        retorna (None, lista_conflitos) para o usuário decidir.
+
+        Returns:
+            (evento_criado, conflitos) — conflitos vazio = sucesso
+        """
+        if not self._calendar_manager or not CalendarManager:
+            return (None, [])
+
+        goal = self.get_goal(goal_id)
+        if not goal:
+            return (None, [])
+
+        # Tentar extrair data/hora do goal ou usar deadline
+        start_time = None
+        if goal.deadline:
+            try:
+                start_time = datetime.fromisoformat(goal.deadline)
+            except (ValueError, TypeError):
+                pass
+
+        if not start_time:
+            start_time = datetime.now().replace(hour=14, minute=0, second=0, microsecond=0)
+
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        # Verificar conflitos
+        conflicts = self._calendar_manager.check_conflicts(
+            start_time, end_time, account_id=account_id
+        )
+
+        if conflicts:
+            return (None, conflicts)
+
+        # Criar evento
+        event = self._calendar_manager.create_event(
+            summary=goal.description,
+            start=start_time,
+            end=end_time,
+            description=f"Goal A.R.I.S.: {goal.description}",
+            account_id=account_id,
+        )
+
+        return (event, [])
+
+    def create_calendar_event_from_reminder(
+        self,
+        reminder_id: str,
+        duration_minutes: int = 30,
+        account_id: str | None = None,
+    ) -> tuple[CalendarEvent | None, list[CalendarEvent]]:
+        """Cria evento no Google Calendar a partir de um ProspectiveReminder."""
+        if not self._calendar_manager or not CalendarManager:
+            return (None, [])
+
+        rem = self._get_reminder(reminder_id)
+        if not rem:
+            return (None, [])
+
+        try:
+            start_time = datetime.fromisoformat(rem.remind_at)
+        except (ValueError, TypeError):
+            return (None, [])
+
+        end_time = start_time + timedelta(minutes=duration_minutes)
+
+        conflicts = self._calendar_manager.check_conflicts(
+            start_time, end_time, account_id=account_id
+        )
+
+        if conflicts:
+            return (None, conflicts)
+
+        event = self._calendar_manager.create_event(
+            summary=rem.text,
+            start=start_time,
+            end=end_time,
+            description=f"Lembrete A.R.I.S.: {rem.text}",
+            account_id=account_id,
+        )
+
+        return (event, [])
+
+    def suggest_meeting_time(
+        self,
+        duration_minutes: int = 60,
+        preferred_date: datetime | None = None,
+        account_id: str | None = None,
+    ) -> tuple[datetime | None, list[CalendarEvent]]:
+        """Sugere horário livre para reunião, verificando Calendar real.
+
+        Returns:
+            (horário_sugerido, conflitos_se_houver)
+        """
+        if not self._calendar_manager or not CalendarManager:
+            return (None, [])
+
+        base = preferred_date or datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+
+        # Buscar rotina + calendar
+        routine = self._parse_routine_beliefs() or {}
+        busy = routine.get("busy_periods", [])
+        quiet = routine.get("quiet_periods", [])
+
+        # Candidatos: 9h-18h
+        candidates = [9, 10, 11, 14, 15, 16, 17]
+
+        for hour in candidates:
+            if any(s <= hour < e for s, e in busy):
+                continue
+            if any(s <= hour < e for s, e in quiet):
+                continue
+
+            start = base.replace(hour=hour, minute=0, second=0, microsecond=0)
+            end = start + timedelta(minutes=duration_minutes)
+
+            conflicts = self._calendar_manager.check_conflicts(
+                start, end, account_id=account_id
+            )
+            if not conflicts:
+                return (start, [])
+
+        return (None, [])

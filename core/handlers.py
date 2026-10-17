@@ -162,6 +162,198 @@ def handle_notify(action: str, params: dict, **ctx) -> str:
     return "Notificação sem conteúdo."
 
 
+# ── Google Calendar ──────────────────────────────────────────
+
+@registry.register_intent("calendar", description="Google Calendar: criar eventos, listar, detectar conflitos")
+def handle_calendar(action: str, params: dict, **ctx) -> str:
+    calendar = ctx.get("calendar")
+    if not calendar:
+        return "Google Calendar não configurado. Defina credenciais OAuth no .env"
+
+    if action == "list":
+        time_min = params.get("time_min")
+        time_max = params.get("time_max")
+        max_results = params.get("max_results", 20)
+        account_id = params.get("account_id")
+
+        if time_min:
+            from datetime import datetime
+            time_min = datetime.fromisoformat(time_min)
+        if time_max:
+            from datetime import datetime
+            time_max = datetime.fromisoformat(time_max)
+
+        events = calendar.list_events(
+            time_min=time_min,
+            time_max=time_max,
+            max_results=max_results,
+            account_id=account_id,
+        )
+
+        if not events:
+            return "Nenhum evento encontrado no período."
+
+        lines = [f"📅 {len(events)} evento(s):"]
+        for evt in events:
+            start_str = evt.start.strftime("%d/%m %H:%M")
+            end_str = evt.end.strftime("%H:%M")
+            lines.append(f"  • {start_str}–{end_str} | {evt.summary}")
+            if evt.description:
+                lines.append(f"    {evt.description[:80]}")
+            lines.append(f"    ID: {evt.id}")
+
+        return "\n".join(lines)
+
+    elif action == "create":
+        summary = params.get("summary", "")
+        start = params.get("start")
+        end = params.get("end")
+        description = params.get("description")
+        location = params.get("location")
+        account_id = params.get("account_id")
+        check_conflicts = params.get("check_conflicts", True)
+        confirmed = params.get("_confirmed", False)
+
+        if not summary or not start or not end:
+            return "Parâmetros obrigatórios: summary, start (ISO), end (ISO)"
+
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start)
+        end_dt = datetime.fromisoformat(end)
+
+        # Verificar conflitos se solicitado
+        if check_conflicts:
+            conflicts = calendar.check_conflicts(start_dt, end_dt, account_id=account_id)
+            if conflicts and not confirmed:
+                conflict_lines = ["⚠️ Conflito detectado! Eventos existentes no horário:"]
+                for c in conflicts:
+                    c_start = c.start.strftime("%d/%m %H:%M")
+                    c_end = c.end.strftime("%H:%M")
+                    conflict_lines.append(f"  • {c_start}–{c_end} | {c.summary} (ID: {c.id})")
+                conflict_lines.append("\nResponda 'sim' para confirmar criação mesmo com conflito.")
+                return "\n".join(conflict_lines)
+
+        event = calendar.create_event(
+            summary=summary,
+            start=start_dt,
+            end=end_dt,
+            description=description,
+            location=location,
+            account_id=account_id,
+        )
+
+        if event:
+            return f"✅ Evento criado: {event.summary} ({event.start.strftime('%d/%m %H:%M')}–{event.end.strftime('%H:%M')})"
+        return "Falha ao criar evento."
+
+    elif action == "conflicts":
+        start = params.get("start")
+        end = params.get("end")
+        account_id = params.get("account_id")
+
+        if not start or not end:
+            return "Parâmetros obrigatórios: start (ISO), end (ISO)"
+
+        from datetime import datetime
+        start_dt = datetime.fromisoformat(start)
+        end_dt = datetime.fromisoformat(end)
+
+        conflicts = calendar.check_conflicts(start_dt, end_dt, account_id=account_id)
+
+        if not conflicts:
+            return "✅ Nenhum conflito no horário solicitado."
+
+        lines = [f"⚠️ {len(conflicts)} conflito(s) detectado(s):"]
+        for c in conflicts:
+            c_start = c.start.strftime("%d/%m %H:%M")
+            c_end = c.end.strftime("%H:%M")
+            lines.append(f"  • {c_start}–{c_end} | {c.summary}")
+        return "\n".join(lines)
+
+    elif action == "free_slots":
+        date = params.get("date")
+        duration = params.get("duration_minutes", 60)
+        account_id = params.get("account_id")
+
+        from datetime import datetime
+        if date:
+            base_date = datetime.fromisoformat(date)
+        else:
+            base_date = datetime.now()
+
+        slots = calendar.find_free_slots(base_date, duration, account_id=account_id)
+
+        if not slots:
+            return "Nenhum horário livre encontrado no período comercial."
+
+        lines = [f"🕐 Horários livres ({duration}min) para {base_date.strftime('%d/%m')}:"]
+        for start, end in slots[:10]:
+            lines.append(f"  • {start.strftime('%H:%M')}–{end.strftime('%H:%M')}")
+        return "\n".join(lines)
+
+    elif action == "accounts":
+        accounts = calendar.list_accounts()
+        if not accounts:
+            return "Nenhuma conta Calendar configurada."
+        lines = ["📅 Contas Google Calendar:"]
+        for acc in accounts:
+            status = "🟢" if acc["is_authenticated"] else "🔴"
+            lines.append(f"  {status} {acc['display_name']} ({acc['account_id']}) — {acc['account_email']}")
+        return "\n".join(lines)
+
+    return f"Ação desconhecida: {action}. Use: list, create, conflicts, free_slots, accounts"
+
+
+# ── Notification Query (CLL1 Bridge) ─────────────────────────
+
+@registry.register_intent("notifications", description="Consultar notificações Android capturadas via Termux:API")
+def handle_notifications(action: str, params: dict, **ctx) -> str:
+    bridge = ctx.get("notification_bridge")
+    if not bridge:
+        return "Ponte de notificações não disponível. Requer CLL1 com termux-api."
+
+    if action == "recent":
+        app = params.get("app")
+        sender = params.get("sender")
+        limit = params.get("limit", 10)
+
+        results = bridge.query_recent(app=app, sender=sender, limit=limit)
+
+        if not results:
+            return "Nenhuma notificação recente encontrada."
+
+        lines = [f"🔔 {len(results)} notificação(ões) recente(s):"]
+        for n in results:
+            time_str = n.get("time", "?")
+            app_name = n.get("app", "?")
+            sender_name = n.get("sender")
+            title = n.get("title")
+            preview = n.get("preview", "")
+
+            line = f"  [{time_str}] {app_name}"
+            if sender_name:
+                line += f" — {sender_name}"
+            if title:
+                line += f": {title}"
+            if preview:
+                line += f" ({preview})"
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    elif action == "status":
+        status = bridge.get_status()
+        lines = ["📱 Status da Ponte de Notificações:"]
+        lines.append(f"  Ativo: {'Sim' if status.get('running') else 'Não'}")
+        lines.append(f"  Termux:API: {'Disponível' if status.get('termux_api_available') else 'Indisponível'}")
+        lines.append(f"  Intervalo: {status.get('poll_interval', 5)}s")
+        if status.get('package_filter'):
+            lines.append(f"  Filtro: {', '.join(status['package_filter'])}")
+        return "\n".join(lines)
+
+    return f"Ação desconhecida: {action}. Use: recent, status"
+
+
 # ── Context Detector ────────────────────────────────────────
 
 @registry.register_intent("context", description="Detectar contexto/atividade atual")
@@ -859,7 +1051,7 @@ def _classify_importance(msg) -> int:
     # Assuntos genéricos / baixo valor
     low = ("obrigado", "obrigada", "confirmação", "confirm",
            "fwd:", "fw:", "re:", "reply")
-    if any(l in subject for l in low):
+    if any(w in subject for w in low):
         score -= 1
 
     return max(0, min(10, score))
@@ -950,7 +1142,7 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
             import webbrowser
             auth_url = gmail.get_auth_url()
             webbrowser.open(auth_url)
-            print(f"  🌐 Browser aberto. Autorize no Google.")
+            print("  🌐 Browser aberto. Autorize no Google.")
             print(f"  ⏳ Aguardando callback em http://localhost:{gmail._auth_port}/callback ...")
             code = gmail.start_callback_server(timeout=120)
             if code:
@@ -1078,7 +1270,7 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
                             f"⚠️ Confirmação de lixeira em massa:\n"
                             f"  {count} mensagens serão movidas pra lixeira.\n"
                             f"  Primeiras:\n" + "\n".join(samples)
-                            + f"\n\nResponda 'sim' para confirmar a exclusão em massa."
+                            + "\n\nResponda 'sim' para confirmar a exclusão em massa."
                             + "\nResponda 'não' para cancelar."
                         )
                     # Executar em massa
@@ -1102,10 +1294,10 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
                 return (
                     f"Encontrei {count} mensagens na última listagem:\n"
                     + "\n".join(samples)
-                    + f"\n\nOpções:\n"
-                    f"  • 'apague o ID <numero>' — apagar uma específica\n"
-                    f"  • 'apague todos' — mover TODAS pra lixeira (com confirmação)\n"
-                    f"  • 'apague todos do <remetente>' — filtrar por remetente"
+                    + "\n\nOpções:\n"
+                    "  • 'apague o ID <numero>' — apagar uma específica\n"
+                    "  • 'apague todos' — mover TODAS pra lixeira (com confirmação)\n"
+                    "  • 'apague todos do <remetente>' — filtrar por remetente"
                 )
             return "ID da mensagem não fornecido. Liste ou busque e-mails primeiro."
 
@@ -1124,7 +1316,7 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
 
         ok = gmail.trash_message(msg_id)
         if ok:
-            return f"🗑️ Mensagem movida pra lixeira (recuperável por 30 dias)."
+            return "🗑️ Mensagem movida pra lixeira (recuperável por 30 dias)."
         return "Falha ao mover pra lixeira."
 
     # ── Restaurar da lixeira ──────────────────────────────────
@@ -1134,7 +1326,7 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
             return "ID da mensagem não fornecido. Para restaurar, forneça o ID."
         ok = gmail.untrash_message(msg_id)
         if ok:
-            return f"♻️ Mensagem restaurada da lixeira."
+            return "♻️ Mensagem restaurada da lixeira."
         return "Falha ao restaurar."
 
     # ── Bloquear remetente ────────────────────────────────────
@@ -1155,6 +1347,164 @@ def handle_gmail(action: str, params: dict, **ctx) -> str:
     )
 
 
+# ── WhatsApp ────────────────────────────────────────────────
+
+@registry.register_intent(
+    "whatsapp",
+    description="WhatsApp: enviar mensagem, listar conversas, ler mensagens"
+)
+def handle_whatsapp(action: str, params: dict, **ctx) -> str:
+    whatsapp = ctx.get("whatsapp")
+    if not whatsapp:
+        return "Módulo WhatsApp não disponível. Verifique se o Playwright está instalado."
+
+    if not whatsapp.is_running:
+        if action != "start":
+            return "WhatsApp não está rodando. Diga 'abrir whatsapp' para iniciar."
+
+    # ── Iniciar ──────────────────────────────────────────────
+    if action == "start":
+        if whatsapp.is_running:
+            return "WhatsApp já está rodando"
+        result = whatsapp.start_sync(headless=True)
+        return result
+
+    # ── Parar ────────────────────────────────────────────────
+    if action == "stop":
+        from modules.whatsapp import clear_pending
+        clear_pending()  # rascunho pendente morre junto com a sessão
+        if not whatsapp.is_running:
+            return "WhatsApp já está fechado"
+        return whatsapp.stop_sync()
+
+    # ── Status ───────────────────────────────────────────────
+    if action == "status":
+        status = whatsapp.get_status()
+        # get_status é dict, precisa ser chamado async
+        if isinstance(status, dict):
+            state = "logado" if status.get("logged_in") else "não logado"
+            running = "rodando" if status.get("running") else "parado"
+            return f"WhatsApp: {running}, {state}"
+        return str(status)
+
+    # ── Listar conversas ─────────────────────────────────────
+    if action == "list":
+        limit = params.get("limit", 10)
+        chats = whatsapp.list_chats_sync(limit)
+        if not chats:
+            return "Nenhuma conversa encontrada. Verifique se está logado."
+
+        lines = ["📱 Conversas recentes:"]
+        for i, chat in enumerate(chats, 1):
+            unread = f" ({chat.unread} novas)" if chat.unread > 0 else ""
+            group = " 👥" if chat.is_group else ""
+            lines.append(
+                f"  {i}. {chat.name}{group}{unread}"
+                f" — {chat.last_message[:50]}"
+                f" [{chat.timestamp}]"
+            )
+        return "\n".join(lines)
+
+    # ── Ler conversa ─────────────────────────────────────────
+    if action == "read":
+        contact = params.get("contact", "")
+        if not contact:
+            return "Especifique o contato. Ex: 'ler mensagem do João'"
+
+        limit = params.get("limit", 20)
+        messages = whatsapp.read_chat_sync(contact, limit)
+        if not messages:
+            return f"Nenhuma mensagem encontrada na conversa com '{contact}'."
+
+        lines = [f"💬 Conversa com {contact}:"]
+        for msg in messages[-15:]:  # Últimas 15
+            prefix = "→" if msg.is_from_me else "←"
+            lines.append(f"  {prefix} {msg.text[:100]}")
+        return "\n".join(lines)
+
+    # ── Enviar mensagem (com confirmação) ────────────────────
+    if action == "send":
+        contact = params.get("contact", "")
+        message = params.get("message", "")
+
+        if not contact:
+            return "Especifique o contato. Ex: 'manda mensagem pro João'"
+        if not message:
+            return "Especifique a mensagem. Ex: 'responde pro João: tudo bem?'"
+
+        # Verificar confirmação
+        confirmed = params.get("_confirmed", False)
+        if not confirmed:
+            preview = whatsapp.prepare_send_sync(contact, message)
+            if isinstance(preview, dict) and preview.get("ok"):
+                # Rascunho pendente: envia só com resposta afirmativa real
+                from modules.whatsapp import set_pending
+                set_pending(contact, message, whatsapp.send_message_sync)
+                return preview["preview"]
+            elif isinstance(preview, dict):
+                return f"Erro: {preview.get('error', 'desconhecido')}"
+            return str(preview)
+
+        # Enviar
+        result = whatsapp.send_message_sync(contact, message)
+        if isinstance(result, dict):
+            if result.get("ok"):
+                return f"✅ Mensagem enviada para {contact}"
+            return f"❌ Falha ao enviar: {result.get('error', 'desconhecido')}"
+        return str(result)
+
+    return (
+        f"Ação desconhecida: {action}. "
+        "Use: start, stop, status, list, read, send"
+    )
+
+
+# ── Face Matrix (matriz de LED 8x8) ────────────────────────
+
+@registry.register_intent(
+    "matrix", description="Matriz de LED 8x8: mostra texto, número ou estado facial"
+)
+def handle_matrix(action: str, params: dict, **ctx) -> str:
+    face = ctx.get("face_matrix")
+    if face is None or not getattr(face, "enabled", False):
+        return "A matriz de LED não está configurada (ARIS_FACE_MATRIX_IP no .env)."
+
+    if action == "status":
+        print(f"  Matriz: {face.ip} | estado atual: {face.last_state or 'nenhum'}")
+        return ""
+
+    if action == "state":
+        state = str(params.get("state", "")).strip()
+        if not state:
+            return "Diga qual estado: idle, listen, think, speak ou happy."
+        if not face.set_state(state, hold=face.content_hold):
+            return f"Estado '{state}' não existe na matriz."
+        return f"Mostrei o estado {state} na matriz."
+
+    if action == "number":
+        value = params.get("number", params.get("value", ""))
+        if not face.show_number(value):
+            return "Não consegui mostrar esse número na matriz."
+        return f"Mostrei o número {value} na matriz."
+
+    if action == "text":
+        text = str(params.get("text", params.get("content", ""))).strip()
+        if not text:
+            return "Diga o texto que devo mostrar na matriz."
+        if not face.show_text(text):
+            return "Não consegui mostrar esse texto na matriz."
+        return f"Mostrei o texto {text} na matriz."
+
+    # action == "show" — comando "mostra <algo> na matriz"
+    content = str(params.get("content", "")).strip()
+    if not content:
+        return "O que eu mostro na matriz? Exemplo: mostra 42 na matriz."
+    sent = face.show_content(content)
+    if not sent:
+        return "Não consegui enviar isso para a matriz."
+    return f"Mostrei {sent} na matriz."
+
+
 # ── Safety Level Mapping ────────────────────────────────────
 # 1=SAFE, 2=CAUTION, 3=DANGER, 4=CRITICAL
 
@@ -1169,11 +1519,14 @@ _SAFETY_LEVELS = {
     "speak": 1,
     "context": 1,
     "gmail": 1,
+    "calendar": 1,
+    "notifications": 1,
     "knowledge": 1,
     "safety": 1,
     "digest": 1,
     "calc": 1,
     "perception": 1,
+    "matrix": 1,
 
     # CAUTION (2) — ações que afetam o estado mas são reversíveis
     "desktop": 2,
@@ -1190,6 +1543,8 @@ _SAFETY_LEVELS = {
 
     # DANGER (3) — ações destrutivas ou difíceis de reverter
     # (trash é tratado internamente com confirmação obrigatória)
+    "calendar_create": 3,  # Criar evento no calendário
+    "whatsapp_send": 4,    # Enviar mensagem WhatsApp — SEMPRE requer confirmação
 
     # CRITICAL (4) — desligar, formatar, etc.
     "exit": 4,

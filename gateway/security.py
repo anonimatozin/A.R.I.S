@@ -16,6 +16,7 @@ class CommandInjectionError(Exception):
 
 
 def safe_path(path: str, base_dir: str) -> str:
+    import pathlib as _pl
     if os.path.isabs(path):
         raise PathTraversalError(f"Absolute path not allowed: {path}")
 
@@ -23,11 +24,20 @@ def safe_path(path: str, base_dir: str) -> str:
     if normalized.startswith("..") or os.sep + ".." in normalized:
         raise PathTraversalError(f"Path traversal detected: {path}")
 
-    full = os.path.abspath(os.path.join(base_dir, normalized))
-    base = os.path.abspath(base_dir)
+    base = os.path.realpath(os.path.abspath(base_dir))
+    full = os.path.realpath(os.path.abspath(os.path.join(base, normalized)))
 
-    if not (full == base or full.startswith(base + os.sep)):
-        raise PathTraversalError(f"Path escapes sandbox: {path}")
+    # Resolve symlinks quando o alvo já existe (evita fuga via junção/symlink)
+    try:
+        full_resolved = str(_pl.Path(os.path.join(base, normalized)).resolve())
+        if not (full_resolved == base or full_resolved.startswith(base + os.sep)):
+            raise PathTraversalError(f"Path escapes sandbox (symlink): {path}")
+        full = full_resolved
+    except PathTraversalError:
+        raise
+    except Exception:
+        if not (full == base or full.startswith(base + os.sep)):
+            raise PathTraversalError(f"Path escapes sandbox: {path}")
 
     return full
 
@@ -35,6 +45,18 @@ def safe_path(path: str, base_dir: str) -> str:
 def sanitize_command(command: str) -> str:
     if not command or not command.strip():
         raise CommandInjectionError("Empty command")
+    if len(command) > 2000:
+        raise CommandInjectionError("Command too long")
+
+    # Bloquear metacaracteres de shell — execução é sem shell, então
+    # qualquer tentativa de encadear/compor comando é rejeitada.
+    shell_meta = [";", "&&", "||", "|", "`", "$(", "${", ">", "<", "\n", "\r"]
+    for meta in shell_meta:
+        if meta in command:
+            raise CommandInjectionError(f"Shell metacharacter not allowed: {meta!r}")
+    # $VAR isolado também é vetor (expansão); bloquear $ seguido de letra/paren
+    if re.search(r"\$[\w\(\{]", command):
+        raise CommandInjectionError("Shell expansion not allowed: $")
 
     dangerous = [
         r";\s*rm\s", r"\|\s*rm\s", r"`.*rm.*`",

@@ -7,6 +7,8 @@ e informa quando algo esta fora do escopo (requer PC).
 from __future__ import annotations
 
 import json
+import os
+import socket
 import sqlite3
 import time
 import uuid
@@ -16,8 +18,8 @@ from urllib.request import Request, urlopen
 from edge.edge_config import EdgeConfig
 
 try:
-    from core.neural.mode import get_mode_manager, ARISMode
     from core.neural.capabilities import get_capability_registry
+    from core.neural.mode import ARISMode, get_mode_manager
 except ImportError:
     get_mode_manager = None
     get_capability_registry = None
@@ -28,7 +30,7 @@ def _detect_pc_ip() -> str | None:
     """Detecta IP do PC automaticamente na rede local."""
     import os
     import socket
-    import struct
+    import time
 
     # Tentar via env var primeiro
     env_host = os.getenv("PC_HOST")
@@ -43,7 +45,18 @@ def _detect_pc_ip() -> str | None:
         except Exception:
             pass
 
-    # Detectar IP local e escanear subrede
+    # Localhost primeiro: HUD/gateway rodam no próprio PC
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        if s.connect_ex(("127.0.0.1", 8770)) == 0:
+            s.close()
+            return "127.0.0.1"
+        s.close()
+    except Exception:
+        pass
+
+    # Detectar IP local e escanear subrede (com timeout total de 3s)
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -53,12 +66,17 @@ def _detect_pc_ip() -> str | None:
     except Exception:
         base = "192.168.1."
 
-    # Escanear IPs comuns
+    # Escanear IPs comuns - timeout total 3s, por IP 0.05s
+    scan_start = time.time()
+    max_scan_time = 3.0
+    per_ip_timeout = 0.05
     for i in range(1, 255):
+        if time.time() - scan_start > max_scan_time:
+            break
         ip = f"{base}{i}"
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.3)
+            s.settimeout(per_ip_timeout)
             if s.connect_ex((ip, 8770)) == 0:
                 s.close()
                 return ip
@@ -120,16 +138,19 @@ def _check_pc_online() -> bool:
     return online
 
 
-def _send_pc_command(command: str, code: str = "") -> dict:
-    """Envia comando ao PC listener HTTP."""
+def _send_pc_command(command: str, **params) -> dict:
+    """Envia uma ação da lista fixa ao PC listener HTTP.
+
+    ``command`` deve estar em ``agent.pc_actions.ALLOWED_COMMANDS`` —
+    o bridge recusa qualquer coisa fora da lista.
+    """
     import os
     host = _get_pc_ip()
     port = int(os.getenv("PC_LISTENER_PORT", "8770"))
     url = f"http://{host}:{port}"
     try:
         payload = {"command": command}
-        if code:
-            payload["code"] = code
+        payload.update({k: v for k, v in params.items() if v is not None})
         data = json.dumps(payload).encode()
         req = Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
         with urlopen(req, timeout=10) as resp:
@@ -140,6 +161,45 @@ def _send_pc_command(command: str, code: str = "") -> dict:
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 DISCORD_MAX_LENGTH = 2000
+
+# Parte 8: ponte do agente no perfil edge (desligada por padrão).
+# Cacheia a construção (inclusive a falha) para não remontar a cada mensagem.
+_AGENTE_EDGE: dict[str, object] = {"ponte": None, "tentou": False}
+
+
+def _agente_edge(texto: str) -> str | None:
+    """Tenta tratar `texto` com o agente no perfil edge (só web + memória).
+
+    Só roda com ARIS_AGENT_ENABLED=true (padrão: fora => zero mudança no
+    comportamento atual). Confirmação sem canal de voz nega por timeout.
+    Qualquer falha devolve None e o fluxo atual do edge segue intacto.
+    """
+    if os.environ.get("ARIS_AGENT_ENABLED", "").strip().lower() not in (
+        "true",
+        "1",
+        "yes",
+        "on",
+    ):
+        return None
+    if not _AGENTE_EDGE["tentou"]:
+        _AGENTE_EDGE["tentou"] = True
+        try:
+            from aris_agent.bridge import build_bridge
+
+            _AGENTE_EDGE["ponte"] = build_bridge(
+                falar=lambda _texto, *, sync=False: None,
+                ouvir=lambda _timeout_s: None,
+                perfil="edge",
+            )
+        except Exception:
+            _AGENTE_EDGE["ponte"] = None
+    ponte = _AGENTE_EDGE["ponte"]
+    if ponte is None:
+        return None
+    try:
+        return ponte.processar(texto)
+    except Exception:
+        return None
 
 
 class EdgeChat:
@@ -180,6 +240,19 @@ class EdgeChat:
                     synced_to_pc INTEGER DEFAULT 0
                 )
             """)
+            # Privacidade estrutural (idempotente pra DBs já existentes)
+            try:
+                self._memory_db.execute(
+                    "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'"
+                )
+            except Exception:
+                pass
+            try:
+                self._memory_db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)"
+                )
+            except Exception:
+                pass
             self._memory_db.commit()
         except Exception:
             self._memory_db = None
@@ -194,7 +267,7 @@ class EdgeChat:
 
         Args:
             text: Texto do usuario.
-            origin_info: Metadados de origem.
+            origin_info: Metadados de origem (pode conter 'history' para histórico do canal Discord).
 
         Returns:
             Resposta do edge.
@@ -210,6 +283,11 @@ class EdgeChat:
                 "Limite de requisicoes atingido no modo edge. "
                 "Aguarde um momento."
             )
+
+        # Parte 8: agente edge (desligado por padrão; ver _agente_edge)
+        resposta_agente = _agente_edge(text)
+        if resposta_agente is not None:
+            return resposta_agente
 
         # Fast path — conversacao simples sem IA
         fast_result = self._try_fast_path(text)
@@ -236,21 +314,49 @@ class EdgeChat:
         if web_result is not None:
             return web_result
 
-        memories = self._search_memories(text)
+        # Privacidade estrutural: scope vem do canal (guild_spaces), com
+        # fallback DM (dono lê shared+próprio private; demais, só shared).
+        mem_scope = "shared"
+        mem_allowed: list[str] | None = None
+        if origin_info:
+            mem_scope = str(origin_info.get("memory_scope", "shared") or "shared")
+            mem_allowed = origin_info.get("allowed_scopes")
+            if mem_allowed is None and origin_info.get("source") == "discord":
+                try:
+                    from modules.guild_spaces import allowed_scopes as _allowed
+                    mem_allowed = _allowed(
+                        str(origin_info.get("guild_category") or ""),
+                        str(origin_info.get("user_id") or ""),
+                    )
+                except Exception:
+                    mem_allowed = ["shared"]
+        memories = self._search_memories(text, allowed_scopes=mem_allowed)
 
         prompt = self._build_prompt(text, memories)
 
-        self._history.append({"role": "user", "content": text})
+        # Use conversation history from origin_info (Discord channel history) if available,
+        # otherwise fall back to internal _history. Sempre copiar para não mutar lista do bot
+        # (antes o edge fazia append na mesma lista do DiscordBot, duplicando user/assistant).
+        conversation_history = []
+        if origin_info and "history" in origin_info:
+            conversation_history = list(origin_info["history"])
+        else:
+            conversation_history = list(self._history)
+
+        conversation_history.append({"role": "user", "content": text})
 
         try:
             messages = [{"role": "system", "content": prompt}]
-            messages.extend(self._history[-10:])
+            messages.extend(conversation_history[-10:])
 
-            # Rota LLM via PC listener (resolve bloqueio de IP no Groq)
-            response = self._call_llm_via_pc(messages)
+            # Rota LLM: Ollama local (se disponível) → PC listener (Groq) → erro
+            response = self._call_ollama(messages)
             if response is not None:
-                self._history.append({"role": "assistant", "content": response})
-                self._save_memory(text, response)
+                conversation_history.append({"role": "assistant", "content": response})
+                # Update internal history if not using external history
+                if not (origin_info and "history" in origin_info):
+                    self._history = conversation_history
+                self._save_memory(text, response, scope=mem_scope)
                 try:
                     from core.personality import get_personality
                     personality = get_personality()
@@ -259,11 +365,13 @@ class EdgeChat:
                     pass
                 return response
 
-            # Fallback: Ollama local no CLL1
-            response = self._call_ollama(messages)
+            # Fallback: Groq via PC listener
+            response = self._call_llm_via_pc(messages)
             if response is not None:
-                self._history.append({"role": "assistant", "content": response})
-                self._save_memory(text, response)
+                conversation_history.append({"role": "assistant", "content": response})
+                if not (origin_info and "history" in origin_info):
+                    self._history = conversation_history
+                self._save_memory(text, response, scope=mem_scope)
                 try:
                     from core.personality import get_personality
                     personality = get_personality()
@@ -282,37 +390,104 @@ class EdgeChat:
 
     def _try_fast_path(self, text: str) -> str | None:
         """Conversacao simples que nao precisa de IA."""
+        import random
         import re
+        # Extras20 primeiro (reusa fast-path; sem LLM, sem nova conexão)
+        try:
+            from modules.extras20 import handle as _extras_handle
+            r = _extras_handle(text)
+            if r:
+                return r
+        except Exception:
+            pass
+        # Casa (qualquer canal; sem hardware = recusa explícita, sem mock)
+        try:
+            from modules.home_control import handle as _home_handle
+            r = _home_handle(text)
+            if r:
+                return r
+        except Exception:
+            pass
         msg = text.lower().strip()
+
+        # Check if this is just an attention call ("aris" at start or alone)
+        is_attention_call = bool(re.match(r"^(?:aris\s*[,.]?\s*)?$", msg))
 
         if re.match(r"^(?:eai|oi|ola|fala|bom dia|boa tarde|boa noite|hey|hello|hi)\b", msg):
             from datetime import datetime
             hour = datetime.now().hour
             if hour < 12:
-                salve = "Bom dia"
+                base_greeting = "Bom dia"
             elif hour < 18:
-                salve = "Boa tarde"
+                base_greeting = "Boa tarde"
             else:
-                salve = "Boa noite"
-            return f"{salve}! Como posso ajudar?"
+                base_greeting = "Boa noite"
+
+            # Variations for greetings
+            if is_attention_call:
+                # Just "aris" alone - shorter response
+                variations = [
+                    "Oi! Em que posso ajudar?",
+                    "Oi! Tudo bem?",
+                    "Fala!",
+                    "Oi! To aqui.",
+                ]
+                return random.choice(variations)
+            else:
+                variations = [
+                    f"{base_greeting}! Como posso ajudar?",
+                    f"{base_greeting}! Tudo bem?",
+                    f"{base_greeting}! Em que posso ser útil?",
+                    f"{base_greeting}! Fala aí.",
+                ]
+                return random.choice(variations)
 
         if re.match(r"^(?:aris\s+)?(?:obrigad[oa]|valeu|thanks|vlw|brigad)", msg):
-            return "De nada! Sempre que precisar, e so chamar."
+            variations = [
+                "De nada! Sempre que precisar, é só chamar.",
+                "Imagina! Tô aqui pra isso.",
+                "De nada! Qualquer coisa é só falar.",
+            ]
+            return random.choice(variations)
 
         if re.match(r"^(?:aris\s+)?(?:ta\s+)?(?:consegu(?:e|indo)|pode|sabe|esta)\s+.+", msg):
-            return "Sim, to aqui e funcionando! Pode pedir o que precisar."
+            variations = [
+                "Sim, tô aqui e funcionando! Pode pedir o que precisar.",
+                "Tô funcionando sim! O que você precisa?",
+                "Sim, tudo certo por aqui. Manda!",
+            ]
+            return random.choice(variations)
 
         if re.match(r"^(?:eai|oi|ola|fala)\s+(?:aris|man|amigo|bro)", msg):
-            return "Fala! To no ar, pode mandar."
+            variations = [
+                "Fala! Tô no ar, pode mandar.",
+                "Oi! Tô aqui. O que você precisa?",
+                "Fala aí!",
+            ]
+            return random.choice(variations)
 
         if re.match(r"^(?:como\s+(?:vc|voce|ta|esta|vai)|tudo\s+(?:bem|certa|ok|beleza))", msg):
-            return "Tudo bem! Aqui e a A.R.I.S., no ar e pronta pra ajudar."
+            variations = [
+                "Tudo bem! Aqui é a A.R.I.S., no ar e pronta pra ajudar.",
+                "Tudo certo! Como posso ajudar hoje?",
+                "Tudo bem por aqui. E com você?",
+            ]
+            return random.choice(variations)
 
         if re.match(r"^(?:aris\s+)?(?:atualiz(?:[aao]|ai|ou)|upgrade|new\s*version)", msg):
-            return "Minha ultima atualizacao foi a versao mais recente do codigo. Quer que eu verifique algo especifico?"
+            variations = [
+                "Minha última atualização foi a versão mais recente do código. Quer que eu verifique algo específico?",
+                "Tô na versão mais recente. Precisa de algo?",
+                "Código atualizado. Quer que eu cheque algo?",
+            ]
+            return random.choice(variations)
 
         if re.match(r"^(?:aris\s+)?(?:vc|voce)\s+(?:e|eh|é)\s+(?:uma?|o)\s+.+", msg):
-            return "Sou a A.R.I.S., sua assistente virtual! Posso ajudar com muitas coisas."
+            variations = [
+                "Sou a A.R.I.S., sua assistente virtual! Posso ajudar com muitas coisas.",
+                "Sou a A.R.I.S.! Criada pelo Vinicius. Em que posso ajudar?",
+            ]
+            return random.choice(variations)
 
         # Status do PC — fast path sem LLM
         if msg in ("status", "status do pc", "pc status", "pc ta ligado", "pc ligado", "pc online"):
@@ -323,31 +498,31 @@ class EdgeChat:
                 result = s.connect_ex(("192.168.0.109", 8770))
                 s.close()
                 if result == 0:
-                    return "O PC esta **online**. Posso executar comandos nele."
+                    return "O PC está **online**. Posso executar comandos nele."
                 else:
-                    return "O PC esta **offline**. Posso operar no modo edge com funcoes basicas."
+                    return "O PC está **offline**. Posso operar no modo edge com funções básicas."
             except Exception:
-                return "Nao consegui verificar o PC."
+                return "Não consegui verificar o PC."
 
         # Comandos de PC — fast path sem LLM
-        if msg in ("desligar", "desliga", "shutdown", "desligar pc"):
+        if msg in ("desligar", "desliga", "shutdown", "desligar pc") or ("deslig" in msg and ("pc" in msg or "computador" in msg or "tudo" in msg)):
             return "Confirmar desligamento? Responda 'sim' pra confirmar."
 
-        if msg in ("reiniciar", "reinicia", "restart", "reboot"):
-            return "Confirmar reinicio? Responda 'sim' pra confirmar."
+        if msg in ("reiniciar", "reinicia", "restart", "reboot") or ("reinici" in msg and ("pc" in msg or "computador" in msg)):
+            return "Confirmar reinício? Responda 'sim' pra confirmar."
 
-        if msg in ("travar", "trava", "lock", "bloquear"):
+        if msg in ("travar", "trava", "lock", "bloquear") or ("trav" in msg and ("pc" in msg or "computador" in msg)):
             return "Confirmar travamento? Responda 'sim' pra confirmar."
 
         if msg in ("hora", "que horas sao", "horas", "relogio"):
             from datetime import datetime
             now = datetime.now()
-            return f"Sao **{now.strftime('%H:%M')}**."
+            return f"São **{now.strftime('%H:%M')}**."
 
         if msg in ("data", "que dia e hoje", "hoje"):
             from datetime import datetime
             now = datetime.now()
-            return f"Hoje e **{now.strftime('%d/%m/%Y')}**."
+            return f"Hoje é **{now.strftime('%d/%m/%Y')}**."
 
         return None
 
@@ -385,8 +560,8 @@ class EdgeChat:
     def _call_ollama(self, messages: list[dict]) -> str | None:
         """Chama Ollama local no CLL1 como fallback."""
         import json as _json
-        import urllib.request
         import os
+        import urllib.request
 
         ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
         model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
@@ -428,20 +603,38 @@ class EdgeChat:
             Resposta se planner resolveu, None se precisa de outro handler.
         """
         try:
-            from core.planner import create_planner, PlanStatus
+            # Ignorar perguntas simples, matematica, cumprimentos
+            import re
+            msg = text.lower().strip()
+            # Perguntas que NÃO são ações
+            skip_patterns = [
+                r"^\d+[\+\-\*\/]\d+",  # matematica: 1+1, 2*3
+                r"^(quanto|qual|onde|como|por que|porque|quem|quando|o que|que)\b",  # perguntas
+                r"^(oi|ola|eai|fala|bom dia|boa tarde|boa noite|obrigad|valeu)",  # cumprimentos
+                r"^(status|hora|data|ajuda|help)",  # comandos simples
+                r"^\d+\s*[\+\-\*\/]\s*\d+",  # expressoes matematicas
+                # Reflexivo/conversacional - não é ação
+                r"^(eu to|eu estou|tava|to) (pensando|achando|vendo|sentindo|lembrando|decidindo|na duvida|em duvida)",  # reflexivo
+                r"^(acho que|sera que|talvez|provavelmente|pode ser|nao sei)",  # incerteza
+                r"(amanha|hoje|ontem) (e|é) (meu|minha|nosso|nossa) (aniversario|niver)",  # datas pessoais
+            ]
+            for pat in skip_patterns:
+                if re.match(pat, msg):
+                    return None
+
+            from core.planner import PlanStatus, create_planner
 
             planner = create_planner(pc_listener_url=self._pc_url)
 
             # Verificar se a mensagem parece ter múltiplas ações
             # (pelo menos 2 conectivos ou 2 verbos de ação)
-            import re
             action_verbs = [
                 "desliga", "liga", "abre", "pesquisa", "reinicia",
                 "trava", "dorme", "cancela", "entra", "executa",
             ]
-            verb_count = sum(1 for v in action_verbs if v in text.lower())
+            verb_count = sum(1 for v in action_verbs if v in msg)
             connectors = [" e ", " depois ", " então ", " quando ", " tambem ", " ai "]
-            conn_count = sum(1 for c in connectors if c in text.lower())
+            conn_count = sum(1 for c in connectors if c in msg)
 
             # Só usar planner se parece ter múltiplas ações
             if verb_count < 2 and conn_count < 1:
@@ -474,7 +667,7 @@ class EdgeChat:
 
             return response
 
-        except Exception as e:
+        except Exception:
             return None
 
     def _build_prompt(self, text: str, memories: list[dict]) -> str:
@@ -618,24 +811,19 @@ class EdgeChat:
                     return "Sleep remoto ainda nao esta disponivel."
 
             # Pesquisa
+            # Deixar para _try_web_intel fazer a busca real (quick_answer/web_search)
+            # NLU só detecta a intenção, não executa a busca
             if result.intent in (IntentType.SEARCH, IntentType.RESEARCH, IntentType.EXPLAIN):
-                query = result.params.get("query", text)
-                pc_online = _check_pc_online()
-                if pc_online:
-                    code = f"import webbrowser; webbrowser.open('https://www.google.com/search?q={query}')"
-                    r = _send_pc_command("exec", code)
-                    if r.get("ok"):
-                        return f"Pesquisando sobre: {query}"
-                return f"Vou pesquisar sobre: {query}"
+                return None
 
             # Abrir/Executar
             if result.intent == IntentType.OPEN:
-                target = result.params.get("target", "")
+                params = result.params or {}
+                target = params.get("target", "") or ""
                 pc_online = _check_pc_online()
                 if not pc_online:
                     return f"O PC esta offline. Nao consigo executar '{target}'."
-                code = f"import subprocess; subprocess.Popen(['cmd', '/c', 'start', '', '{target}'], shell=False)"
-                r = _send_pc_command("exec", code)
+                r = _send_pc_command("open_app", target=target) or {}
                 if r.get("ok"):
                     return f"Abrindo {target} no PC."
                 return f"Erro ao abrir {target}: {r.get('error', 'desconhecido')}"
@@ -648,8 +836,7 @@ class EdgeChat:
                     return f"O PC esta offline. Nao consigo abrir {url}."
                 if not url.startswith("http"):
                     url = f"https://www.google.com/search?q={url}"
-                code = f"import webbrowser; webbrowser.open('{url}')"
-                r = _send_pc_command("exec", code)
+                r = _send_pc_command("open_url", url=url)
                 if r.get("ok"):
                     return f"Abrindo {url} no PC."
                 return f"Erro ao abrir: {r.get('error', 'desconhecido')}"
@@ -665,9 +852,9 @@ class EdgeChat:
                     return f"Vou comparar {items[0]} com {items[1]}..."
 
             # Latest
+            # Deixar para _try_web_intel fazer a busca real de notícias
             if result.intent == IntentType.LATEST:
-                topic = result.params.get("topic", text)
-                return f"Vou buscar as ultimas noticias sobre: {topic}"
+                return None
 
             # Tempo
             if result.intent == IntentType.WEATHER:
@@ -682,16 +869,14 @@ class EdgeChat:
                 if action == "cancel":
                     pc_online = _check_pc_online()
                     if pc_online:
-                        code = "from core.tools.power_scheduler import cancel_shutdown; print(cancel_shutdown())"
-                        r = _send_pc_command("exec", code)
+                        _send_pc_command("schedule_cancel")
                         return "Desligamento cancelado."
                     return "Nao ha agendamentos para cancelar."
 
                 if action == "query":
                     pc_online = _check_pc_online()
                     if pc_online:
-                        code = "from core.tools.power_scheduler import get_scheduled_shutdown; print(get_scheduled_shutdown())"
-                        r = _send_pc_command("exec", code)
+                        _send_pc_command("schedule_query")
                         return "Verificando agendamentos..."
                     return "Nao consigo verificar agendamentos com PC offline."
 
@@ -699,8 +884,7 @@ class EdgeChat:
                     pc_online = _check_pc_online()
                     if not pc_online:
                         return "O PC esta offline. Nao posso agendar desligamento."
-                    code = f"from core.tools.power_scheduler import schedule_shutdown; print(schedule_shutdown(at='{time_str}'))"
-                    r = _send_pc_command("exec", code)
+                    r = _send_pc_command("schedule_shutdown", at=time_str)
                     if r.get("ok"):
                         return f"Desligamento agendado para {time_str}."
                     return f"Erro ao agendar: {r.get('error', 'desconhecido')}"
@@ -709,8 +893,7 @@ class EdgeChat:
                     pc_online = _check_pc_online()
                     if not pc_online:
                         return "O PC esta offline. Nao posso agendar ligamento."
-                    code = f"from core.tools.power_scheduler import schedule_wake; print(schedule_wake(at='{time_str}'))"
-                    r = _send_pc_command("exec", code)
+                    r = _send_pc_command("schedule_wake", at=time_str)
                     if r.get("ok"):
                         return f"Ligamento agendado para {time_str}."
                     return f"Erro ao agendar: {r.get('error', 'desconhecido')}"
@@ -737,7 +920,7 @@ class EdgeChat:
             url = url.strip()
             if not url.startswith("http"):
                 url = "https://" + url
-            result = _send_pc_command({"command": "browser_open", "url": url})
+            result = _send_pc_command("browser_open", url=url)
             if result and result.get("ok"):
                 return f"Navegador aberto em **{url}**. Titulo: {result.get('title', 'N/A')}"
             return f"Erro ao abrir navegador: {result.get('error', 'desconhecido')}"
@@ -746,21 +929,21 @@ class EdgeChat:
         m = re.search(r"(?:navegue|va para|acesse|goto|navigate|abre)\s+(https?://.+)", msg)
         if m:
             url = m.group(1).strip()
-            result = _send_pc_command({"command": "browser_navigate", "url": url})
+            result = _send_pc_command("browser_navigate", url=url)
             if result and result.get("ok"):
                 return f"Naveguei para **{url}**. Titulo: {result.get('title', 'N/A')}"
             return f"Erro ao navegar: {result.get('error', 'desconhecido')}"
 
         # Screenshot
         if re.search(r"(?:screenshot|captura|print|foto da tela|tela)", msg):
-            result = _send_pc_command({"command": "browser_screenshot"})
+            result = _send_pc_command("browser_screenshot")
             if result and result.get("ok"):
                 return f"Screenshot capturada ({result.get('size', 0)} bytes)."
             return f"Erro ao capturar screenshot: {result.get('error', 'desconhecido')}"
 
         # Snapshot da pagina
         if re.search(r"(?:snapshot|conteudo da pagina|texto da pagina|o que tem na pagina)", msg):
-            result = _send_pc_command({"command": "browser_snapshot"})
+            result = _send_pc_command("browser_snapshot")
             if result and result.get("ok"):
                 text_content = result.get("text", "")[:2000]
                 return f"Pagina: **{result.get('title', 'N/A')}**\n\n{text_content}"
@@ -770,7 +953,7 @@ class EdgeChat:
         m = re.search(r"(?:clique|click|aperte)\s+(?:em|no|na)?\s*(.+)", msg)
         if m:
             selector = m.group(1).strip()
-            result = _send_pc_command({"command": "browser_click", "selector": selector})
+            result = _send_pc_command("browser_click", selector=selector)
             if result and result.get("ok"):
                 return f"Cliquei em **{selector}**."
             return f"Erro ao clicar: {result.get('error', 'desconhecido')}"
@@ -780,14 +963,14 @@ class EdgeChat:
         if m:
             text_to_type = m.group(1).strip()
             selector = m.group(2).strip()
-            result = _send_pc_command({"command": "browser_type", "selector": selector, "text": text_to_type})
+            result = _send_pc_command("browser_type", selector=selector, text=text_to_type)
             if result and result.get("ok"):
                 return f"Digitei **{text_to_type}** em **{selector}**."
             return f"Erro ao digitar: {result.get('error', 'desconhecido')}"
 
         # Fechar navegador
         if re.search(r"(?:feche|close|fecha)\s+(?:navegador|browser|aba)", msg):
-            result = _send_pc_command({"command": "browser_close"})
+            result = _send_pc_command("browser_close")
             if result and result.get("ok"):
                 return "Navegador fechado."
             return f"Erro ao fechar: {result.get('error', 'desconhecido')}"
@@ -813,8 +996,9 @@ class EdgeChat:
                     return None
 
                 try:
-                    from core.web_intel import quick_answer
                     import concurrent.futures
+
+                    from core.web_intel import quick_answer
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                         future = ex.submit(quick_answer, query)
                         answer = future.result(timeout=12)
@@ -834,8 +1018,9 @@ class EdgeChat:
                     return None
 
                 try:
-                    from core.web_intel import web_search
                     import concurrent.futures
+
+                    from core.web_intel import web_search
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                         future = ex.submit(web_search, f"{topic} noticias recentes 2026", 5)
                         search = future.result(timeout=12)
@@ -869,32 +1054,61 @@ class EdgeChat:
         self._request_count += 1
         return True
 
-    def _search_memories(self, query: str) -> list[dict]:
-        """Busca memorias relevantes no SQLite local."""
+    def _search_memories(
+        self, query: str, allowed_scopes: list[str] | None = None
+    ) -> list[dict]:
+        """Busca memorias relevantes no SQLite local, com filtro de scope.
+
+        allowed_scopes=None = sem filtro (legado). O caminho de conversa do
+        Discord sempre informa a lista (guild_spaces.allowed_scopes) — o
+        isolamento é filtro de query, nunca instrução de prompt.
+        """
         if not self._memory_db:
             return []
         try:
-            cursor = self._memory_db.execute(
-                "SELECT content, category, importance FROM memories "
-                "WHERE content LIKE ? ORDER BY importance DESC LIMIT 5",
-                (f"%{query[:50]}%",),
-            )
+            if allowed_scopes is not None:
+                if not allowed_scopes:
+                    return []
+                placeholders = ",".join("?" * len(allowed_scopes))
+                cursor = self._memory_db.execute(
+                    "SELECT content, category, importance, scope FROM memories "
+                    f"WHERE content LIKE ? AND scope IN ({placeholders}) "
+                    "ORDER BY importance DESC LIMIT 5",
+                    (f"%{query[:50]}%", *[str(s) for s in allowed_scopes]),
+                )
+            else:
+                cursor = self._memory_db.execute(
+                    "SELECT content, category, importance FROM memories "
+                    "WHERE content LIKE ? ORDER BY importance DESC LIMIT 5",
+                    (f"%{query[:50]}%",),
+                )
             return [dict(row) for row in cursor.fetchall()]
         except Exception:
             return []
 
-    def _save_memory(self, user_text: str, response: str) -> None:
+    def _save_memory(
+        self, user_text: str, response: str, scope: str = "shared"
+    ) -> None:
         """Salva interacao na memoria local e knowledge graph."""
         if not self._memory_db:
             return
+        scope = str(scope or "shared")
         try:
             mem_id = str(uuid.uuid4())[:8]
             now = datetime.now(UTC).isoformat()
-            self._memory_db.execute(
-                "INSERT INTO memories (id, content, category, importance, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (mem_id, f"User: {user_text}\nA.R.I.S.: {response}", "conversation", 5, now),
-            )
+            try:
+                self._memory_db.execute(
+                    "INSERT INTO memories (id, content, category, importance, created_at, scope) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (mem_id, f"User: {user_text}\nA.R.I.S.: {response}", "conversation", 5, now, scope),
+                )
+            except Exception:
+                # DB antigo sem coluna scope (migração falhou): fallback legado
+                self._memory_db.execute(
+                    "INSERT INTO memories (id, content, category, importance, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (mem_id, f"User: {user_text}\nA.R.I.S.: {response}", "conversation", 5, now),
+                )
             self._memory_db.commit()
         except Exception:
             pass

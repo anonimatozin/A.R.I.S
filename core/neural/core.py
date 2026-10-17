@@ -2,7 +2,7 @@
 
 Orquestrador dos subsistemas cognitivos:
 
-    entrada → evento → atenção → working/estado → roteador
+    entrada → [REFLEXO] → evento → atenção → working/estado → roteador
            → decisão → security gate → ação → feedback → aprendizado
 
 O ``NeuralCore`` NÃO substitui o ``Aris``: é uma camada que torna o
@@ -35,6 +35,7 @@ from core.neural.memory.system import MemorySystem
 from core.neural.memory.working_memory import WorkingMemory
 from core.neural.planning.planner import Planner
 from core.neural.reasoning.reasoning_router import ReasoningRouter
+from core.neural.reflex import ReflexRegistry, get_reflex_registry, ReflexResult
 from core.neural.security.security_gate import GateOutcome, SecurityGate
 from core.neural.state import GlobalState
 from core.neural.workspace import CognitiveWorkspace, WorkspaceSnapshot
@@ -62,6 +63,7 @@ class NeuralCore:
         planner: Planner,
         workspace: CognitiveWorkspace | None = None,
         logger: ArisLogger | None = None,
+        reflex: ReflexRegistry | None = None,
     ) -> None:
         self.event_bus = event_bus
         self.state = state
@@ -79,6 +81,7 @@ class NeuralCore:
         self.workspace = workspace
         self._logger = logger
         self._ctx_provider = None
+        self._reflex = reflex or get_reflex_registry(logger)
 
     def set_handler_context(self, provider) -> None:
         """Define um provedor de contexto de handler.
@@ -145,6 +148,26 @@ class NeuralCore:
             logger=logger,
         )
 
+    def initialize_reflex(self, plugins_dir: str, **dependencies) -> None:
+        """Inicializa a Camada Reflexo com plugins e dependências.
+
+        Args:
+            plugins_dir: Diretório de plugins (ex: 'plugins/')
+            **dependencies: Dependências injetadas nos agentes (analyzer, state, memory, etc.)
+        """
+        # Carregar plugins built-in
+        self._reflex.load_from_plugins(plugins_dir)
+
+        # Re-injetar dependências nos agentes já carregados
+        for agent in self._reflex._agents:
+            agent._deps.update(dependencies)
+
+        if self._logger:
+            metrics = self._reflex.get_metrics()
+            self._logger.info(
+                f"Camada Reflexo inicializada: {metrics['by_agent']}"
+            )
+
     def register_services(self, container) -> None:
         """Publica os serviços do Neural Core no container."""
         container.set("neural.event_bus", self.event_bus)
@@ -161,6 +184,7 @@ class NeuralCore:
         container.set("neural.learning", self.learning)
         container.set("neural.planner", self.planner)
         container.set("neural.workspace", self.workspace)
+        container.set("neural.reflex", self._reflex)
         if self.workspace and self.workspace._world:
             container.set("neural.world_model", self.workspace._world)
 
@@ -191,6 +215,23 @@ class NeuralCore:
             determinística, ou ``None`` quando a consulta requer LLM
             (o Aris mantém o fluxo atual nesse caso).
         """
+        # 0. Camada Reflexo — interceptação rápida sem LLM
+        reflex_result = self._reflex.process(query, context={"neural": self})
+        if reflex_result and reflex_result.handled:
+            # Converter ReflexResult para ActionResult compatível
+            from core.neural.actions.action_engine import ActionResult
+            if self._logger:
+                self._logger.debug(
+                    f"NeuralCore: Reflexo '{reflex_result.agent_name}' respondeu em "
+                    f"{reflex_result.latency_ms:.1f}ms"
+                )
+            return ActionResult(
+                success=True,
+                output=reflex_result.response,
+                module=f"reflex.{reflex_result.agent_name}",
+                action="respond",
+            )
+
         # 1. Evento de entrada
         event = self._make_event(query)
         self.state.register_event(event)
@@ -336,4 +377,13 @@ class NeuralCore:
             "reasoning": self.reasoning.get_stats(),
             "workspace": self.build_workspace().to_dict(),
             "world_model": wm_stats,
+            "reflex": self._reflex.get_metrics(),
         }
+
+    def get_reflex_metrics(self) -> dict[str, Any]:
+        """Métricas da Camada Reflexo."""
+        return self._reflex.get_metrics()
+
+    def reset_reflex_metrics(self) -> None:
+        """Reseta métricas da Camada Reflexo."""
+        self._reflex.reset_metrics()

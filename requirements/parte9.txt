@@ -1,0 +1,6 @@
+Sem dependências externas: os evals usam só a biblioteca padrão do Python 3.12
+(scenarios.py, runner.py, trace_view.py, intents.py e run.py não importam
+nada de terceiros; as ferramentas avaliadas vêm das requirements/parteN.txt).
+
+# O modo --live usa a mesma pilha da Parte 1:
+httpx>=0.27.0  # já instalado pela parte1.txt

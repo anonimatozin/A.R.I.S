@@ -212,15 +212,26 @@ class ModuleManager:
     # ── Instance creation ───────────────────────────────────
 
     def _create_module_instance(self, module: Any, name: str) -> Any:
-        """Cria uma instância do módulo."""
+        """Cria uma instância do módulo.
+
+        Dependências OPCIONAIS ausentes (ImportError, ex.: discord.py não
+        instalado) logam INFO — não é erro, é recurso desativado. Outras
+        exceções seguem como ERROR.
+        """
         class_name = "".join(word.capitalize() for word in name.split("_"))
+
+        def _log_optional_or_error(label: str, exc: Exception) -> None:
+            if isinstance(exc, ImportError):
+                self._logger.info(f"Módulo {label} desativado (dependência opcional ausente): {exc}")
+            else:
+                self._logger.error(f"Erro ao instanciar {label}: {exc}")
 
         if hasattr(module, class_name):
             cls = getattr(module, class_name)
             try:
                 return cls()
             except Exception as e:
-                self._logger.error(f"Erro ao instanciar {class_name}: {e}")
+                _log_optional_or_error(class_name, e)
                 return None
 
         for attr_name in dir(module):
@@ -231,7 +242,7 @@ class ModuleManager:
                 try:
                     return attr()
                 except Exception as e:
-                    self._logger.error(f"Erro ao instanciar {attr_name}: {e}")
+                    _log_optional_or_error(attr_name, e)
                     return None
 
         return None

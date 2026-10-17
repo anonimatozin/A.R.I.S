@@ -133,6 +133,7 @@ class MemoryManager:
             "last_accessed": entry.last_accessed,
             "access_count": entry.access_count,
             "is_permanente": entry.is_permanente,
+            "scope": entry.scope,
         }
 
     @staticmethod
@@ -152,6 +153,7 @@ class MemoryManager:
             priority=Priority(row["priority"]),
             tags=tags,
             source=row.get("source", "conversation"),
+            scope=str(row.get("scope", "shared") or "shared"),
             created_at=row["created_at"],
             last_accessed=row["last_accessed"],
             access_count=row.get("access_count", 0),
@@ -170,8 +172,9 @@ class MemoryManager:
         tags: list[str] | None = None,
         source: str = "conversation",
         is_permanente: bool = False,
+        scope: str = "shared",
     ) -> MemoryEntry:
-        """Salva uma nova memória."""
+        """Salva uma nova memória (scope: 'shared' | 'private:<user_id>')."""
         entry_id = str(uuid.uuid4())[:8]
         now = datetime.now().isoformat()
         entry = MemoryEntry(
@@ -183,6 +186,7 @@ class MemoryManager:
             priority=priority,
             tags=tags or [],
             source=source,
+            scope=str(scope or "shared"),
             is_permanente=is_permanente,
         )
 
@@ -196,6 +200,7 @@ class MemoryManager:
             "title": title,
             "category": category.value,
             "importance": entry.importance,
+            "scope": entry.scope,
         })
 
         self._logger.info(f"Memória salva: [{entry_id}] {title}")
@@ -231,8 +236,13 @@ class MemoryManager:
         min_importance: int = 0,
         tags: list[str] | None = None,
         limit: int = 20,
+        allowed_scopes: list[str] | None = None,
     ) -> list[MemoryEntry]:
-        """Busca memórias por critérios."""
+        """Busca memórias por critérios, com filtro estrutural de scope.
+
+        allowed_scopes=None = sem filtro (uso interno de sistema). O caminho
+        de conversa sempre informa a lista (guild_spaces.allowed_scopes).
+        """
         cat_value = category.value if category else None
         rows = self._db.search_memories(
             query=query,
@@ -240,6 +250,7 @@ class MemoryManager:
             min_importance=min_importance,
             tags=tags,
             limit=limit,
+            allowed_scopes=allowed_scopes,
         )
         return [self._row_to_entry(r) for r in rows]
 

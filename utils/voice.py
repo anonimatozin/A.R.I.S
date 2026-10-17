@@ -32,13 +32,14 @@ class Voice:
         self._voice_id = voice_id
         self._speaker = None
         self._enabled = _SAPI_AVAILABLE
+        self._has_pt_voice = False
         self._lock = threading.Lock()
 
         if self._enabled:
             self._init_speaker()
 
     def _init_speaker(self) -> None:
-        """Inicializa o objeto SAPI."""
+        """Inicializa o objeto SAPI e seleciona voz pt-BR (nunca inglês)."""
         try:
             self._speaker = win32com.client.Dispatch("SAPI.SpVoice")
             self._speaker.Rate = self._rate
@@ -48,14 +49,31 @@ class Voice:
                 voices = self._speaker.GetVoices()
                 if 0 <= self._voice_id < voices.Count:
                     self._speaker.Voice = voices.Item(self._voice_id)
+                self._has_pt_voice = True
+                return
+
+            voices = self._speaker.GetVoices()
+            for index in range(voices.Count):
+                item = voices.Item(index)
+                blob = f"{item.GetDescription()} {item.GetId()}".lower()
+                if "pt" in blob and ("brazil" in blob or "brasil" in blob or "portugu" in blob):
+                    self._speaker.Voice = item
+                    self._has_pt_voice = True
+                    return
         except Exception:
             self._enabled = False
             self._speaker = None
+            self._has_pt_voice = False
 
     @property
     def enabled(self) -> bool:
         """Verifica se a voz está disponível."""
         return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        """Ativa/desativa a fala (usado pelos toggles de voz)."""
+        self._enabled = bool(value)
 
     @property
     def rate(self) -> int:
@@ -87,6 +105,10 @@ class Voice:
             async_mode: Se True, fala em thread separada (não bloqueia).
         """
         if not self._enabled or not self._speaker or not text:
+            return
+
+        if not self._has_pt_voice:
+            # Sem voz pt-BR: não fala (evita voz em inglês).
             return
 
         if async_mode:

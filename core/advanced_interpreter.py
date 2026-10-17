@@ -133,6 +133,15 @@ class AdvancedInterpreter:
                 "actions": ["veja a tela", "analise a tela", "leia a tela", "descreva a tela", "encontre erro na tela", "procure por", "o que está aparecendo", "câmera disponível"],
                 "params": ["action", "query", "question"],
             },
+            "matrix": {
+                "description": (
+                    "Matriz de LED 8x8 (ESP32 + MAX7219): mostra texto rolante, "
+                    "número ou estado facial. Estados aceitos: idle, listen, think, "
+                    "speak, happy (não invente outros)."
+                ),
+                "actions": ["mostrar", "exibir", "estado", "texto", "número"],
+                "params": ["action", "content", "state", "text", "number"],
+            },
             "browser": {
                 "description": "Automação de navegador web",
                 "actions": ["navegar", "browser", "site", "página"],
@@ -345,6 +354,7 @@ Se não houver comando, gere só a resposta natural (sem JSON).
 - Seja PRECISO nos parâmetros (nome do app, cidade, etc).
 - Responda SEMPRE em português.
 - NUNCA comece com "Claro!", "Certamente!" ou "Como posso ajudar?".
+- NUNCA repita saudações (ex: "Oi! Oi! Oi!" — apenas UMA saudação).
 - Se for conversa cumprimento ("oi", "bom dia", "eai"), responda casual.
 - Se for pergunta, responda com conteúdo real.
 - Se for comando, responda curto e execute."""
@@ -519,7 +529,21 @@ Se não houver comando, gere só a resposta natural (sem JSON).
             (response_text, intents) se confidence >= threshold.
             None se precisa de LLM.
         """
-        from core.nlu import IntentType
+        from core.nlu import IntentType, _QUESTION_PATTERNS
+        import re
+
+        # Primeiro: verificar se é conversa casual/pergunta (não ação)
+        # Se for, NÃO roteia para ação — retorna resposta conversacional direta
+        is_question = False
+        for pattern in _QUESTION_PATTERNS:
+            if re.search(pattern, user_message, re.IGNORECASE):
+                is_question = True
+                break
+
+        if is_question:
+            # É pergunta/conversa casual — não criar intenção de ação
+            # Retornar resposta conversacional simples
+            return self._generate_conversational_response(user_message), []
 
         result = self.nlu.detect(user_message)
 
@@ -571,6 +595,40 @@ Se não houver comando, gere só a resposta natural (sem JSON).
         response = self._generate_nlu_response(result)
         return response, [intent]
 
+    def _generate_conversational_response(self, user_message: str) -> str:
+        """Gera resposta conversacional para perguntas/saudacoes casuais."""
+        msg = user_message.lower().strip()
+
+        import re
+        # Saudações
+        if re.match(r"^(?:oi|ola|eai|fala|bom\s*dia|boa\s*tarde|boa\s*noite|hey|hello|hi|salve)\b", msg):
+            from datetime import datetime
+            hour = datetime.now().hour
+            if hour < 12:
+                return "Bom dia! Como posso ajudar?"
+            elif hour < 18:
+                return "Boa tarde! Em que posso ser útil?"
+            return "Boa noite! Tudo bem?"
+
+        # Agradecimentos
+        if re.match(r"^(?:obrigad[oa]|valeu|thanks|vlw|brigad)", msg):
+            return "De nada! Sempre que precisar, é só chamar."
+
+        # Perguntas sobre status/funcionamento
+        if re.match(r"^(?:como\s+(?:vc|voce|ta|esta|vai)|tudo\s+(?:bem|certa|ok|beleza))", msg):
+            return "Tudo bem por aqui! A ARIS está no ar e pronta pra ajudar."
+
+        # Perguntas sobre identidade
+        if re.match(r"^(?:vc|voce)\s+(?:e|eh|é)\s+(?:uma?|o)\s+.+", msg):
+            return "Sou a A.R.I.S., sua assistente virtual! Posso ajudar com muitas coisas."
+
+        # Perguntas gericas
+        if re.match(r"^(?:quanto|qual|onde|como|por\s*que|porque|quem|quando|o\s*que|que)\b", msg):
+            return "Essa é uma boa pergunta. Quer que eu pesquise pra você?"
+
+        # Resposta padrão para conversa casual
+        return "Entendi. Em que mais posso ajudar?"
+
     def _generate_nlu_response(self, result) -> str:
         """Gera resposta curta pra NLU fast path."""
         from core.nlu import IntentType
@@ -589,3 +647,41 @@ Se não houver comando, gere só a resposta natural (sem JSON).
             IntentType.TRANSLATE: "Vou traduzir isso.",
         }
         return responses.get(result.intent, "Entendi, vou processar.")
+
+    def handle_pc_status_feedback(self, user_message: str) -> tuple[str, list[Intent]] | None:
+        """Processa feedback do usuario sobre status do PC.
+        
+        Detecta frases como "o PC está ligado", "o PC está desligado", etc.
+        e aplica override no ModeManager.
+        """
+        import re
+        msg = user_message.lower().strip()
+        
+        # Detectar afirmação explícita sobre estado do PC
+        pc_online_patterns = [
+            r"(?:o\s+)?pc\s+(?:ta|esta|eh|e)\s+ligado",
+            r"(?:o\s+)?pc\s+(?:ta|esta|eh|e)\s+online",
+            r"(?:o\s+)?computador\s+(?:ta|esta|eh|e)\s+ligado",
+            r"(?:o\s+)?computador\s+(?:ta|esta|eh|e)\s+online",
+            r"o\s+pc\s+esta\s+ligado",
+            r"pc\s+ligado",
+        ]
+        
+        pc_offline_patterns = [
+            r"(?:o\s+)?pc\s+(?:ta|esta|eh|e)\s+desligado",
+            r"(?:o\s+)?pc\s+(?:ta|esta|eh|e)\s+offline",
+            r"(?:o\s+)?computador\s+(?:ta|esta|eh|e)\s+desligado",
+            r"(?:o\s+)?computador\s+(?:ta|esta|eh|e)\s+offline",
+            r"o\s+pc\s+esta\s+desligado",
+            r"pc\s+desligado",
+        ]
+        
+        for pattern in pc_online_patterns:
+            if re.search(pattern, msg):
+                return ("Entendido — vou atualizar o modo para PRIMARY (PC online).", [])
+        
+        for pattern in pc_offline_patterns:
+            if re.search(pattern, msg):
+                return ("Entendido — vou atualizar o modo para EDGE (PC offline).", [])
+        
+        return None

@@ -2,6 +2,7 @@
 
 Gerencia sync log, merge por timestamp (last-write-wins),
 e backup antes de merge.
+Também sincroniza personalidade entre PC (Primary), CLL1 (Edge) e painel web.
 """
 
 from __future__ import annotations
@@ -32,10 +33,20 @@ class SyncEngine:
         self._db_path = Path(db_path)
         self._logger = logger
         self._last_sync: str = ""
+        self._personality_hash: str = ""
 
     @property
     def last_sync(self) -> str:
         return self._last_sync
+
+    @property
+    def personality_hash(self) -> str:
+        return self._personality_hash
+
+    def compute_personality_hash(self, personality: str) -> str:
+        """Computa hash da personalidade para detectar mudanças."""
+        import hashlib
+        return hashlib.sha256(personality.encode()).hexdigest()[:16]
 
     def backup_before_sync(self) -> Path | None:
         """Cria backup do SQLite antes de sincronizar."""
@@ -198,3 +209,35 @@ class SyncEngine:
             if self._logger:
                 self._logger.warning(f"merge_records erro: {e}")
             return 0
+
+    # ── Personality Sync ────────────────────────────────────────
+
+    def get_personality_for_sync(self, personality: str) -> dict:
+        """Prepara personalidade para envio ao CLL1/painel web."""
+        return {
+            "personality": personality,
+            "hash": self.compute_personality_hash(personality),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "source": "pc_primary",
+        }
+
+    def apply_personality_sync(self, sync_data: dict) -> bool:
+        """Aplica personalidade recebida do PC (para CLL1/Edge)."""
+        try:
+            personality = sync_data.get("personality", "")
+            if not personality:
+                return False
+
+            # Salvar no arquivo de personalidade sincronizada
+            personality_path = Path("~/cll1/data/personality_sync.md").expanduser()
+            personality_path.parent.mkdir(parents=True, exist_ok=True)
+            personality_path.write_text(personality, encoding="utf-8")
+
+            self._personality_hash = sync_data.get("hash", "")
+            if self._logger:
+                self._logger.info(f"Personalidade sincronizada recebida (hash: {self._personality_hash})")
+            return True
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"apply_personality_sync erro: {e}")
+            return False

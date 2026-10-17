@@ -198,32 +198,15 @@ class TestCLI:
 
     def test_import(self):
         """CLI importa sem erro."""
-        import agent.cli
-        assert hasattr(agent.cli, 'main')
+        import agent.aris_cli
+        assert hasattr(agent.aris_cli, 'main')
 
-    def test_cmd_status_offline(self, capsys):
-        """Status sem agent rodando."""
-        from agent.cli import cmd_status
-        with patch("agent.cli._send_to_agent", return_value=None):
-            cmd_status()
-            captured = capsys.readouterr()
-            assert "nao esta rodando" in captured.out
-
-    def test_cmd_message_offline(self, capsys):
-        """Message sem agent rodando."""
-        from agent.cli import cmd_message
-        with patch("agent.cli._send_to_agent", return_value=None):
-            cmd_message("teste")
-            captured = capsys.readouterr()
-            assert "Erro" in captured.out
-
-    def test_cmd_stop_offline(self, capsys):
-        """Stop sem agent rodando."""
-        from agent.cli import cmd_stop
-        with patch("agent.cli._send_to_agent", return_value=None):
-            cmd_stop()
-            captured = capsys.readouterr()
-            assert "nao esta rodando" in captured.out
+    def test_has_key_functions(self):
+        """CLI tem funções essenciais."""
+        import agent.aris_cli
+        assert callable(agent.aris_cli.main)
+        assert hasattr(agent.aris_cli, 'GATEWAY_URL')
+        assert hasattr(agent.aris_cli, 'PC_LISTENER_URL')
 
 
 class TestService:

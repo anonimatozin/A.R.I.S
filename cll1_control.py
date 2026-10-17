@@ -195,6 +195,73 @@ def restart():
     }))
 
 
+def sched_start():
+    show(send_request({"type": "scheduler_start"}))
+
+
+def sched_stop():
+    show(send_request({"type": "scheduler_stop"}))
+
+
+def sched_status():
+    show(send_request({"type": "scheduler_status"}))
+
+
+def ts(action="status"):
+    show(send_request({"type": "tailscale", "action": action}))
+
+
+def restart_verify(timeout=90):
+    """Restart com VERIFICAÇÃO real: compara boot_time antes/depois.
+
+    Não confia em "comando enviado" — só reporta sucesso se o CLL1
+    voltar com um boot_time (timestamp de boot do processo) DIFERENTE.
+    """
+    import time as _time
+    import datetime as _dt
+
+    before = send_request({"type": "status"})
+    boot_before = (before or {}).get("boot_time")
+    print(f"boot_time ANTES: {boot_before} "
+          f"({_dt.datetime.fromtimestamp(boot_before).isoformat() if boot_before else 'desconhecido'})")
+
+    resp = send_request({"type": "restart_gateway"})
+    print("resposta do restart:")
+    show(resp)
+    if not (resp or {}).get("ok"):
+        print("FALHA: gateway recusou o restart.")
+        return False
+
+    print(f"\nAguardando reinício (timeout {timeout}s)...")
+    deadline = _time.time() + timeout
+    attempt = 0
+    while _time.time() < deadline:
+        attempt += 1
+        _time.sleep(5)
+        try:
+            cur = send_request({"type": "status"})
+        except Exception:
+            cur = None
+        if not cur or not cur.get("ok"):
+            print(f"  [{attempt}] gateway ainda fora do ar...")
+            continue
+        boot_after = cur.get("boot_time")
+        if boot_after and boot_before and boot_after != boot_before:
+            print("\nRESTART CONFIRMADO [OK]")
+            print(f"  boot_time ANTES : {boot_before} ({_dt.datetime.fromtimestamp(boot_before).isoformat()})")
+            print(f"  boot_time DEPOIS: {boot_after} ({_dt.datetime.fromtimestamp(boot_after).isoformat()})")
+            print(f"  sv status: {cur.get('output', 'N/A')}")
+            return True
+        elif boot_after and not boot_before:
+            print(f"\nRESTART PROVAVEL [OK] (boot_time agora disponível: {boot_after})")
+            return True
+        else:
+            print(f"  [{attempt}] gateway respondeu mas boot_time inalterado ({boot_after})...")
+    print("\nFALHA: timeout — boot_time não mudou. O restart NÃO foi confirmado.")
+    print("Verifique data/restart.log no CLL1 e o serviço runit 'cll1-main'.")
+    return False
+
+
 def exec_python(path):
     show(send_request({
         "type": "exec_python",
@@ -226,6 +293,13 @@ Comandos:
   python cll1_control.py install-service
   python cll1_control.py enable
   python cll1_control.py restart
+  python cll1_control.py restart-verify   (restart + confirma boot_time mudou)
+
+  python cll1_control.py sched-start
+  python cll1_control.py sched-stop
+  python cll1_control.py sched-status
+
+  python cll1_control.py ts-status | ts-start | ts-up | ts-funnel | ts-funnel-off
 """)
 
 
@@ -304,6 +378,34 @@ def main():
 
     elif command == "restart":
         restart()
+
+    elif command == "restart-verify":
+        ok = restart_verify()
+        sys.exit(0 if ok else 1)
+
+    elif command == "sched-start":
+        sched_start()
+
+    elif command == "sched-stop":
+        sched_stop()
+
+    elif command == "sched-status":
+        sched_status()
+
+    elif command == "ts-status":
+        ts("status")
+
+    elif command == "ts-start":
+        ts("start")
+
+    elif command == "ts-up":
+        ts("up")
+
+    elif command == "ts-funnel":
+        ts("funnel")
+
+    elif command == "ts-funnel-off":
+        ts("funnel_off")
 
     else:
         usage()

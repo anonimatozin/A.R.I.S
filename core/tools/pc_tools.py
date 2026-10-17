@@ -14,10 +14,11 @@ from typing import Any
 
 
 def _safe_path(base: str, path: str) -> str | None:
-    """Verifica se o path e seguro (sem traversal)."""
+    """Verifica se o path e seguro (sem traversal, com symlink resolve)."""
     try:
-        resolved = os.path.normpath(os.path.join(base, path))
-        if not resolved.startswith(os.path.normpath(base)):
+        base_real = os.path.realpath(os.path.abspath(base))
+        resolved = os.path.realpath(os.path.abspath(os.path.join(base_real, path)))
+        if not (resolved == base_real or resolved.startswith(base_real + os.sep)):
             return None
         return resolved
     except Exception:
@@ -25,11 +26,33 @@ def _safe_path(base: str, path: str) -> str | None:
 
 
 def _run_cmd(cmd: str, timeout: int = 30, cwd: str | None = None) -> dict[str, Any]:
-    """Executa comando no PC."""
+    """Executa comando no PC sem shell exposto (tokens validados).
+
+    No Windows, builtins como `echo` não existem como exe: emulados.
+    Metacaracteres só são bloqueados quando aparecem como token separado
+    (fora de aspas), para não quebrar `powershell -Command "... | ..."` legítimo.
+    """
+    import shlex as _shlex
     try:
         start = time.time()
+        try:
+            argv = _shlex.split(cmd, posix=True)
+        except Exception:
+            return {"ok": False, "error": "Parse error"}
+        if not argv:
+            return {"ok": False, "error": "Empty command"}
+        # Bloquear operadores de shell como tokens isolados / expansões
+        for tok in argv[1:]:
+            if tok in (";", "&&", "||", "|", "`", ">", "<", "$", "$("):
+                return {"ok": False, "error": "Shell metacharacter not allowed"}
+            if "$(" in tok or "`" in tok:
+                return {"ok": False, "error": "Shell expansion not allowed"}
+        if argv[0].lower() == "echo":
+            duration = int((time.time() - start) * 1000)
+            return {"ok": True, "stdout": " ".join(argv[1:])[:5000],
+                    "stderr": "", "returncode": 0, "duration_ms": duration}
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
+            argv, shell=False, capture_output=True, text=True,
             timeout=timeout, cwd=cwd
         )
         duration = int((time.time() - start) * 1000)

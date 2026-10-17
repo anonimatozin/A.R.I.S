@@ -46,6 +46,7 @@ class Settings:
     PROMPT: str = field(init=False)
     VOICE_RATE: int = field(init=False)
     VOICE_VOLUME: int = field(init=False)
+    CONTINUOUS_VOICE_ENABLED: bool = field(init=False)
     GROQ_API_KEY: str = field(init=False)
     GEMINI_API_KEY: str = field(init=False)
     CHAT_MODEL: str = field(init=False)
@@ -55,6 +56,19 @@ class Settings:
     ESP32_ENABLED: bool = field(init=False)
     ESP32_WS_PORT: int = field(init=False)
     ESP32_SIMULATION: bool = field(init=False)
+
+    # Matriz de LED 8x8 (periférico opcional; vazio = desativada)
+    FACE_MATRIX_IP: str = field(init=False)
+
+    # Voz contínua
+    VAD_AGGRESSIVENESS: int = field(init=False)
+    STT_MODEL: str = field(init=False)
+    STT_DEVICE: str = field(init=False)
+    STT_COMPUTE_TYPE: str = field(init=False)
+    VOSK_MODEL_PATH: str = field(init=False)
+    WARMUP_FRAMES: int = field(init=False)
+    ENERGY_THRESHOLD: float = field(init=False)
+    MIC_DEVICE_INDEX: int = field(init=False)
 
     # Saudação contextual
     GREETING_TIMEZONE: str = field(init=False)
@@ -75,6 +89,7 @@ class Settings:
         object.__setattr__(self, "PROMPT", os.getenv("ARIS_PROMPT", "> "))
         object.__setattr__(self, "VOICE_RATE", int(os.getenv("ARIS_VOICE_RATE", "0")))
         object.__setattr__(self, "VOICE_VOLUME", int(os.getenv("ARIS_VOICE_VOLUME", "100")))
+        object.__setattr__(self, "CONTINUOUS_VOICE_ENABLED", os.getenv("ARIS_CONTINUOUS_VOICE_ENABLED", "false").lower() == "true")
         object.__setattr__(self, "GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
         object.__setattr__(self, "GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
         object.__setattr__(self, "CHAT_MODEL", os.getenv("ARIS_CHAT_MODEL", "openai/gpt-oss-120b"))
@@ -84,6 +99,18 @@ class Settings:
         object.__setattr__(self, "ESP32_ENABLED", os.getenv("ESP32_ENABLED", "true").lower() == "true")
         object.__setattr__(self, "ESP32_WS_PORT", int(os.getenv("ESP32_WS_PORT", "8766")))
         object.__setattr__(self, "ESP32_SIMULATION", os.getenv("HARDWARE_SIMULATION", "false").lower() == "true")
+        object.__setattr__(self, "FACE_MATRIX_IP", os.getenv("ARIS_FACE_MATRIX_IP", "").strip())
+
+        # Voz contínua (VAD + Wake word + STT)
+        object.__setattr__(self, "VAD_AGGRESSIVENESS", int(os.getenv("ARIS_VAD_AGGRESSIVENESS", "2")))
+        object.__setattr__(self, "STT_MODEL", os.getenv("ARIS_STT_MODEL", "tiny"))
+        object.__setattr__(self, "STT_DEVICE", os.getenv("ARIS_STT_DEVICE", "cpu"))
+        object.__setattr__(self, "STT_COMPUTE_TYPE", os.getenv("ARIS_STT_COMPUTE_TYPE", "int8"))
+        object.__setattr__(self, "VOSK_MODEL_PATH", os.getenv("ARIS_VOSK_MODEL_PATH", "vosk-model-pt"))
+        object.__setattr__(self, "WARMUP_FRAMES", int(os.getenv("ARIS_WARMUP_FRAMES", "10")))
+        object.__setattr__(self, "ENERGY_THRESHOLD", float(os.getenv("ARIS_ENERGY_THRESHOLD", "750")))
+        mic_idx = os.getenv("ARIS_MIC_DEVICE_INDEX")
+        object.__setattr__(self, "MIC_DEVICE_INDEX", int(mic_idx) if mic_idx is not None else -1)
 
         # Saudação contextual
         object.__setattr__(self, "GREETING_TIMEZONE", os.getenv("ARIS_GREETING_TIMEZONE", "America/Sao_Paulo"))

@@ -10,7 +10,7 @@ from collections.abc import Callable
 try:
     import pyautogui
     _PYAUTOGUI = True
-except ImportError:
+except BaseException:  # noqa: BLE001 - pyautogui chama sys.exit() sem tkinter/display
     _PYAUTOGUI = False
 
 try:

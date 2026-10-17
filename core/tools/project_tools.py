@@ -17,10 +17,25 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _run(cmd: str, timeout: int = 30, cwd: str | None = None) -> dict[str, Any]:
+    import shlex as _shlex
     try:
         start = time.time()
+        try:
+            argv = _shlex.split(cmd, posix=True)
+        except Exception:
+            return {"ok": False, "error": "Parse error", "duration_ms": 0}
+        if not argv:
+            return {"ok": False, "error": "Empty command", "duration_ms": 0}
+        for tok in argv[1:]:
+            if tok in (";", "&&", "||", "|", "`", ">", "<", "$", "$("):
+                return {"ok": False, "error": "Shell metacharacter not allowed", "duration_ms": 0}
+            if "$(" in tok or "`" in tok:
+                return {"ok": False, "error": "Shell expansion not allowed", "duration_ms": 0}
+        if argv[0].lower() == "echo":
+            return {"ok": True, "stdout": " ".join(argv[1:])[:5000], "stderr": "",
+                    "duration_ms": int((time.time() - start) * 1000)}
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
+            argv, shell=False, capture_output=True, text=True,
             timeout=timeout, cwd=cwd or PROJECT_ROOT,
         )
         return {

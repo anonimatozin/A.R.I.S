@@ -152,6 +152,16 @@ class MemoryDB:
             CREATE INDEX IF NOT EXISTS idx_memory_category
             ON memory_entries(category)
         """)
+        # Privacidade estrutural: scope = 'shared' | 'private:<user_id>'.
+        # Migração idempotente pra bancos já existentes.
+        try:
+            self._execute("ALTER TABLE memory_entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'shared'")
+        except Exception:
+            pass
+        self._execute("""
+            CREATE INDEX IF NOT EXISTS idx_memory_scope
+            ON memory_entries(scope)
+        """)
         self._execute("""
             CREATE INDEX IF NOT EXISTS idx_memory_source
             ON memory_entries(source)
@@ -179,8 +189,8 @@ class MemoryDB:
         self._execute(
             """INSERT OR REPLACE INTO memory_entries
                (id, category, title, content, importance, priority, tags,
-                source, memory_type, created_at, last_accessed, access_count, is_permanente)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                source, memory_type, created_at, last_accessed, access_count, is_permanente, scope)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data["id"],
                 data["category"],
@@ -195,6 +205,7 @@ class MemoryDB:
                 data["last_accessed"],
                 data.get("access_count", 0),
                 1 if data.get("is_permanente") else 0,
+                str(data.get("scope", "shared") or "shared"),
             ),
         )
 
@@ -213,7 +224,14 @@ class MemoryDB:
         min_importance: int = 0,
         tags: list[str] | None = None,
         limit: int = 20,
+        allowed_scopes: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Busca com filtro estrutural de scope (filtro de query, não de prompt).
+
+        allowed_scopes=None preserva o comportamento legado (sem filtro) pros
+        chamadores internos de sistema. O caminho de conversa SEMPRE passa a
+        lista (ver guild_spaces.allowed_scopes).
+        """
         conditions: list[str] = []
         params: list[Any] = []
 
@@ -229,6 +247,12 @@ class MemoryDB:
         if min_importance > 0:
             conditions.append("importance >= ?")
             params.append(min_importance)
+        if allowed_scopes is not None:
+            if not allowed_scopes:
+                return []
+            placeholders = ",".join("?" * len(allowed_scopes))
+            conditions.append(f"scope IN ({placeholders})")
+            params.extend([str(s) for s in allowed_scopes])
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         sql = f"SELECT * FROM memory_entries {where} ORDER BY importance DESC, access_count DESC LIMIT ?"
@@ -266,6 +290,7 @@ class MemoryDB:
             "last_accessed": "last_accessed",
             "access_count": "access_count",
             "is_permanente": "is_permanente",
+            "scope": "scope",
         }
 
         set_clauses: list[str] = []

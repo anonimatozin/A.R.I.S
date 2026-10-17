@@ -1,0 +1,6 @@
+# Parte 1 — Clientes de LLM e roteador de modelos
+# Já instalado no ambiente do projeto; sem frameworks de agente.
+
+httpx>=0.27.0  # HTTP síncrono para APIs /v1/chat/completions (Groq, OpenAI, Ollama) — sem SDK de provedor
+
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

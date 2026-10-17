@@ -191,21 +191,52 @@ class TestScreenSource:
         assert monitors[1]["width"] == 1920
 
     def test_capture_returns_pil_image(self, monkeypatch):
+        import types
+
+        monkeypatch.setattr("core.vision.sources.screen_source._LINUX", False)
         monkeypatch.setattr("core.vision.sources.screen_source._PYAUTOGUI", True)
         fake_img = make_image()
+        # pyautogui é None sem display; cria um fake patcheável.
+        fake_pa = types.SimpleNamespace(screenshot=lambda region=None: fake_img)
         monkeypatch.setattr(
-            "core.vision.sources.screen_source.pyautogui.screenshot",
-            lambda region=None: fake_img,
+            "core.vision.sources.screen_source.pyautogui", fake_pa
         )
         image = ScreenSource(logger=_logger()).capture()
         assert image is not None
         assert image.size == (320, 180)
 
     def test_capture_none_when_unavailable(self, monkeypatch):
+        monkeypatch.setattr("core.vision.sources.screen_source._LINUX", False)
         monkeypatch.setattr("core.vision.sources.screen_source._PYAUTOGUI", False)
         source = ScreenSource(logger=_logger())
         assert not source.is_available
         assert source.capture() is None
+
+    def test_linux_capture_uses_session_tool(self, monkeypatch, tmp_path):
+        """No Linux, a captura usa a ferramenta da sessão e valida a imagem."""
+        from PIL import Image as PILImage
+
+        monkeypatch.setattr("core.vision.sources.screen_source._LINUX", True)
+
+        def fake_capture_to(path, timeout=20):
+            PILImage.new("RGB", (320, 180), "red").save(path)
+            return True, str(path)
+
+        monkeypatch.setattr(
+            "utils.screen_capture.capture_to", fake_capture_to
+        )
+        image = ScreenSource(logger=_logger()).capture()
+        assert image is not None
+        assert image.size == (320, 180)
+
+    def test_linux_capture_error_is_clear(self, monkeypatch):
+        """Sem ferramenta de captura, devolve None com erro claro (log)."""
+        monkeypatch.setattr("core.vision.sources.screen_source._LINUX", True)
+        monkeypatch.setattr(
+            "utils.screen_capture.capture_to",
+            lambda path, timeout=20: (False, "Nenhuma ferramenta de captura"),
+        )
+        assert ScreenSource(logger=_logger()).capture() is None
 
     def test_status_includes_monitors(self, monkeypatch):
         monkeypatch.setattr("core.vision.sources.screen_source._WINDOWS", False)

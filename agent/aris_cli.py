@@ -19,8 +19,8 @@ import io
 from pathlib import Path
 from datetime import datetime
 
-# Fix Windows console encoding
-if sys.platform == "win32":
+# Fix Windows console encoding (only when run as script, not imported by tests)
+if sys.platform == "win32" and __name__ == "__main__":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 

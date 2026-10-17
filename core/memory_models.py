@@ -87,6 +87,7 @@ class MemoryEntry:
     priority: Priority = Priority.MEDIUM
     tags: list[str] = field(default_factory=list)
     source: str = "conversation"
+    scope: str = "shared"
     file_path: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_accessed: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -103,8 +104,11 @@ class MemoryEntry:
     @classmethod
     def from_dict(cls, data: dict) -> "MemoryEntry":
         """Cria uma instância a partir de um dicionário."""
+        data = dict(data)
         data["category"] = MemoryCategory(data["category"])
         data["priority"] = Priority(data["priority"])
+        data.setdefault("scope", "shared")
+        data["scope"] = str(data["scope"] or "shared")
         return cls(**data)
 
     def to_json(self) -> str:

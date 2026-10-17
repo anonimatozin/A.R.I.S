@@ -42,6 +42,9 @@ EVENT_VISION_TEXT_DETECTED = "vision.text_detected"
 EVENT_VISION_ERROR_DETECTED = "vision.error_detected"
 EVENT_VISION_APPLICATION_DETECTED = "vision.application_detected"
 EVENT_VISION_OBJECT_DETECTED = "vision.object_detected"
+EVENT_VISION_GESTURE_DETECTED = "vision.gesture_detected"
+EVENT_VISION_FACE_DETECTED = "vision.face_detected"
+EVENT_VISION_FACE_RECOGNIZED = "vision.face_recognized"
 
 # Tipos de evento do sistema de memória (MemoryManager / KnowledgeGraph)
 EVENT_MEMORY_CREATED = "memory.created"

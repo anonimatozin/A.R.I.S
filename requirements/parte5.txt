@@ -1,0 +1,10 @@
+# Parte 5 — Segurança, permissões e executor de ferramentas
+# Sem dependências obrigatórias: só biblioteca padrão do Python 3.12
+# (re, json, threading, pathlib, weakref, tempfile, os, time, logging).
+#
+# OPCIONAL — NÃO INSTALAR agora (outras partes estão rodando pip em paralelo;
+# instalado apenas se o usuário quiser o atalho global de emergência):
+# keyboard>=0.13.5  # atalho global (KillSwitch.enable_hotkey=True); import
+#                   # preguiçoso, desligado por padrão, pode exigir admin no Windows
+#
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

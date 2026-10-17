@@ -1,0 +1,6 @@
+# Parte 7 — Núcleo do agente (laço pensar → agir → verificar)
+
+Sem dependências externas: o laço usa só a biblioteca padrão do Python 3.12
+(threading, json, logging, datetime, unicodedata, uuid, re, dataclasses).
+
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

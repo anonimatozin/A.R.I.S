@@ -189,7 +189,34 @@ class Segmenter:
 
         # "e" como conectivo - SÓ quando precedido e seguido por espaço
         # (para evitar "desliga" -> "d" + "sliga")
+        # NÃO cortar em "e" quando parece conectar itens de uma lista simples
+        # Ex: "abre spotify e discord" NÃO deve cortar
+        # Mas "abre spotify e depois abre chrome" DEVE cortar
         for m in re.finditer(r"(?<=\s)e(?=\s)", text, re.IGNORECASE):
+            start, end = m.span()
+            # Verificar contexto antes e depois do "e"
+            before = text[max(0, start-20):start].strip()
+            after = text[end:min(len(text), end+20)].strip()
+            
+            # Se antes e depois são frases curtas (nomes de apps, comandos simples),
+            # provavelmente é uma lista, não separação de ações
+            before_words = before.split()
+            after_words = after.split()
+            
+            # Heurística: se ambos os lados têm <= 3 palavras e não têm verbos de ação
+            # complexos, é provavelmente uma lista de itens
+            action_verbs = {"abre", "abrir", "fecha", "fechar", "liga", "desliga", 
+                           "reinicia", "executa", "roda", "inicia", "para", "toca",
+                           "pesquisa", "busca", "abre", "visita", "navega"}
+            
+            before_has_verb = any(v in before.lower() for v in action_verbs)
+            after_has_verb = any(v in after.lower() for v in action_verbs)
+            
+            # Se ambos os lados são itens simples (sem verbos, <= 3 palavras), não cortar
+            if (len(before_words) <= 3 and len(after_words) <= 3 
+                and not before_has_verb and not after_has_verb):
+                continue  # Não adicionar este corte
+            
             cuts.append((m.start(), "e"))
 
         # "aí" como conectivo

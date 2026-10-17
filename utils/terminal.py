@@ -4,7 +4,9 @@ Interface visual moderna inspirada em OpenCode/Claude Code.
 """
 
 import sys
+import threading
 from datetime import datetime
+from typing import Optional
 
 
 class Terminal:
@@ -123,6 +125,84 @@ class Terminal:
                     setattr(Terminal, attr, "")
             return True
         return False
+
+
+class StateIndicator:
+    """Indicador visual de estado em tempo real (listening/processing/speaking).
+    
+    Executa em thread separada para atualizar a linha de status sem bloquear.
+    """
+    
+    STATES = {
+        "idle": ("○", "DIM", "aguardando"),
+        "listening": ("●", "GREEN", "ouvindo..."),
+        "processing": ("◐", "YELLOW", "processando..."),
+        "speaking": ("▶", "CYAN", "falando..."),
+        "wake_detected": ("⚡", "MAGENTA", "wake word detectada"),
+        "error": ("✗", "RED", "erro"),
+    }
+    
+    def __init__(self):
+        self._current_state = "idle"
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._last_line = ""
+    
+    def set_state(self, state: str) -> None:
+        """Define o estado atual."""
+        with self._lock:
+            if state in self.STATES:
+                self._current_state = state
+    
+    def start(self) -> None:
+        """Inicia a animação do indicador."""
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._animate, daemon=True, name="state-indicator")
+        self._thread.start()
+    
+    def stop(self) -> None:
+        """Para a animação e limpa a linha."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        self._clear_line()
+    
+    def _animate(self) -> None:
+        """Loop de animação do indicador."""
+        spinner_chars = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        idx = 0
+        while self._running:
+            with self._lock:
+                state = self._current_state
+            icon, color_name, label = self.STATES.get(state, self.STATES["idle"])
+            color = getattr(Terminal, color_name, Terminal.RESET)
+            
+            # Para estados animados, usar spinner
+            if state in ("listening", "processing"):
+                icon = spinner_chars[idx % len(spinner_chars)]
+                idx += 1
+            
+            line = f"  {color}{icon}{Terminal.RESET} {Terminal.DIM}{label}{Terminal.RESET}"
+            
+            if line != self._last_line:
+                self._clear_line()
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                self._last_line = line
+            
+            # Velocidade da animação
+            import time
+            time.sleep(0.1 if state in ("listening", "processing") else 0.5)
+    
+    def _clear_line(self) -> None:
+        """Limpa a linha atual."""
+        if self._last_line:
+            sys.stdout.write(f"\r{' ' * len(self._last_line)}\r")
+            sys.stdout.flush()
+            self._last_line = ""
 
 
 class ArisUI:
@@ -258,22 +338,22 @@ class ArisUI:
     @staticmethod
     def show_error(error: str) -> None:
         """Mostra erro formatado."""
-        print(f"  {Terminal.RED}✗ {error}{Terminal.RESET}")
+        print(f"  {Terminal.RED}[ERRO] {error}{Terminal.RESET}")
 
     @staticmethod
     def show_success(message: str) -> None:
         """Mostra sucesso formatado."""
-        print(f"  {Terminal.GREEN}✓ {message}{Terminal.RESET}")
+        print(f"  {Terminal.GREEN}[OK] {message}{Terminal.RESET}")
 
     @staticmethod
     def show_warning(message: str) -> None:
         """Mostra aviso formatado."""
-        print(f"  {Terminal.YELLOW}⚠ {message}{Terminal.RESET}")
+        print(f"  {Terminal.YELLOW}[AVISO] {message}{Terminal.RESET}")
 
     @staticmethod
     def show_info(message: str) -> None:
         """Mostra informacao formatada."""
-        print(f"  {Terminal.CYAN}ℹ {message}{Terminal.RESET}")
+        print(f"  {Terminal.CYAN}[INFO] {message}{Terminal.RESET}")
 
     @staticmethod
     def show_thinking() -> None:
@@ -325,6 +405,17 @@ class ArisUI:
         print()
 
     @staticmethod
+    def show_user_input(text: str) -> None:
+        """Exibe entrada do usuário com cor distinta."""
+        print(f"  {Terminal.BLUE}voce>{Terminal.RESET} {Terminal.WHITE}{text}{Terminal.RESET}")
+
+    @staticmethod
+    def show_aris_response(text: str, from_reflex: bool = False) -> None:
+        """Exibe resposta do ARIS com indicador opcional de Camada Reflexo."""
+        prefix = f"{Terminal.MAGENTA}⚡{Terminal.RESET} " if from_reflex else ""
+        print(f"  {Terminal.GREEN}A.R.I.S.:{Terminal.RESET} {prefix}{Terminal.LIGHT_GREEN}{text}{Terminal.RESET}")
+
+    @staticmethod
     def input_modern(
         version: str = "1.0.0",
         provider: str = "groq",
@@ -366,6 +457,44 @@ class ArisUI:
         except (EOFError, KeyboardInterrupt):
             print()
             return ""
+
+    @staticmethod
+    def show_wake_beep() -> None:
+        """Toca um bip curto ao detectar wake word (usa pygame se disponível)."""
+        try:
+            import pygame
+            pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
+            # Gerar um tom simples programaticamente
+            import array
+            import math
+            sample_rate = 22050
+            duration = 0.1  # 100ms
+            frequency = 880  # Lá5
+            samples = int(sample_rate * duration)
+            buf = array.array('h', [0] * samples)
+            for i in range(samples):
+                buf[i] = int(32767 * 0.3 * math.sin(2 * math.pi * frequency * i / sample_rate))
+            sound = pygame.mixer.Sound(buffer=buf)
+            sound.play()
+            pygame.time.wait(int(duration * 1000))
+        except Exception:
+            # Fallback silencioso se pygame não estiver disponível ou falhar
+            pass
+
+    @staticmethod
+    def show_state_indicator() -> "StateIndicator":
+        """Retorna uma instância do indicador de estado."""
+        return StateIndicator()
+
+    @staticmethod
+    def show_mic_status(enabled: bool, available: bool) -> None:
+        """Mostra status do microfone no início."""
+        if not available:
+            print(f"  {Terminal.YELLOW}⚠ Microfone não disponível — continuando em modo texto{Terminal.RESET}")
+        elif enabled:
+            print(f"  {Terminal.GREEN}● Microfone ativo — diga \"aris\" para ativar{Terminal.RESET}")
+        else:
+            print(f"  {Terminal.DIM}○ Microfone desligado — digite 'voz' para ativar{Terminal.RESET}")
 
 
 def disable_colors() -> bool:

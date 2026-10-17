@@ -57,15 +57,27 @@ class IntentResult:
 
 # ── Padroes de linguagem informal ────────────────────────────
 
+# Padrões que indicam PERGUNTA PURA (não ação de busca) — devem ter prioridade menor
+# Apenas para casos que NÃO requerem busca externa
+_QUESTION_PATTERNS = [
+    r"^quanto\s+(?:e|eh|é|dá|dao)\s+\d",           # "quanto é 1 mais 1", "quanto dá 2+2" -> CALC
+    r"^(?:verdade|falso|certo|errado)\s*\??$",     # "verdade?" "falso?" -> VERIFY
+    r"^isso\s*(?:e|eh|é)\s*(?:verdadeiro|falso|certo|errado)\s*\??$", # "isso é verdade?"
+    r"^ta\s*(?:certo|errado|correto)\s*\??$",      # "ta certo?"
+    r"^(?:oi|ola|eai|bom\s*(?:dia|tarde|noite)|fala|hey|hello|hi|salve|e\s*ai)$", # cumprimentos puros
+    r"^(?:obrigad[oa]|valeu|thanks|thx|brigad)$",   # agradecimentos
+    r"^(?:tchau|bye|flw|falou|até\s*(?:mais|logo))$", # despedidas
+    r"^(?:como\s*(?:voce|vc)\s*(?:ta|está|esta|e|eh))\s*\??$", # "como vc tá?"
+    r"^(?:sim|não|nao|ok|beleza|blz)$",             # respostas simples
+]
+
+# Padrões que indicam AÇÃO de busca explícita — prioridade maior
 _SEARCH_PATTERNS = [
     r"(?:pesquisa|pesquisar|busca|buscar|procura|procurar)\s*(?:ai|pf|por favor|aqui)?",
     r"(?:search|find|look\s*(?:up|for))",
-    r"(?:o\s*que\s*(?:e|eh|é|são)\s+(?!aris|vc|voce).+)",
-    r"(?:quem\s*(?:e|eh|é|são)\s+.+)",
-    r"(?:onde\s+(?:fica|e|eh|é|está|ta|fica)\s+.+)",
-    r"(?:quando\s*(?:e|eh|é|foi|será)\s+.+)",
-    r"(?:como\s+(?:faz|funciona|e|eh|é)\s+(?!aris|vc|voce|ta).+)",
-    r"(?:qual\s+(?:e|eh|é|são)\s+(?!melhor).+)",
+    r"(?:o\s*que\s*(?:e|eh|é|são)\s+(?!aris|vc|voce)\w+)",   # "o que é python" -> busca
+    r"(?:quem\s*(?:e|eh|é|são)\s*\w+)",                      # "quem é alan" -> busca
+    r"(?:onde\s+(?:fica|e|eh|é|está|ta|fica)\s*\w+)",        # "onde fica torre" -> busca
     r"(?:me\s*(?:dá|da|mostra))\s+(?!fala).+",
     r"(?:sabe\s*(?:dizer|falar|informar))",
     r"(?:info(?:rmação|fo)?\s*(?:sobre|de|do|da|dos|das))",
@@ -128,6 +140,8 @@ _PC_CONTROL_PATTERNS = [
     r"(?:pc|computador)\s+(?:desliga|reinicia|trava|dorme|sleep|shutdown|restart|lock)",
     r"(?:wake\s*on\s*lan|wol|liga(?:r)?\s+(?:o|a)?\s*(?:pc|computador|maquina))",
     r"(?:status\s+do\s+pc|pc\s+(?:ta|esta|eh|e)\s+(?:ligado|desligado|online|offline))",
+    r"(?:o\s+pc\s+(?:ta|esta|eh|e)\s+(?:ligado|desligado|online|offline))",
+    r"(?:pc\s+(?:ta|esta|eh|e)\s+(?:ligado|desligado|online|offline))",
 ]
 
 _SCHEDULE_PATTERNS = [
@@ -317,12 +331,24 @@ class NLUEngine:
             IntentResult com intent, confidence, params.
         """
         normalized = self._normalize(text)
+        
+        # Primeiro: verificar se é uma pergunta/informação (não ação)
+        # Se matches _QUESTION_PATTERNS, reduzir drasticamente score de ações
+        is_question = False
+        for pattern in _QUESTION_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                is_question = True
+                break
+        
         scores: dict[IntentType, float] = {}
         params: dict[str, Any] = {}
 
         for group in self._groups:
             score = self._match_patterns(normalized, group.patterns)
             if score > 0:
+                # Se é pergunta e a intenção é de ação, reduzir score drasticamente
+                if is_question and group.intent in (IntentType.SEARCH, IntentType.RESEARCH, IntentType.VERIFY, IntentType.COMPARE, IntentType.LATEST, IntentType.VISIT, IntentType.OPEN, IntentType.PC_CONTROL, IntentType.SCHEDULE, IntentType.SYSTEM, IntentType.EXECUTE):
+                    score *= 0.1  # Penaliza ações quando detecta pergunta
                 scores[group.intent] = score * group.weight
 
         if not scores:
@@ -377,8 +403,8 @@ class NLUEngine:
     def _normalize(self, text: str) -> str:
         """Normaliza texto pra matching."""
         t = text.lower().strip()
-        # Remover pontuacao
-        t = re.sub(r'[^\w\s]', ' ', t)
+        # Remover pontuacao mas manter caracteres acentuados
+        t = re.sub(r'[^\w\s]', ' ', t, flags=re.UNICODE)
         # Remover espacos extras
         t = re.sub(r'\s+', ' ', t).strip()
         return t

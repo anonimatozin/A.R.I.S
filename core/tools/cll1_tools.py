@@ -12,11 +12,31 @@ from typing import Any
 
 
 def _run_cmd(cmd: str, timeout: int = 30) -> dict[str, Any]:
-    """Executa comando no CLL1 e retorna resultado."""
+    """Executa comando no CLL1 e retorna resultado (sem shell exposto)."""
+    import shlex as _shlex
     try:
         start = time.time()
+        try:
+            argv = _shlex.split(cmd, posix=True)
+        except Exception:
+            return {"ok": False, "error": "Parse error",
+                    "duration_ms": 0, "returncode": -1, "stdout": "", "stderr": ""}
+        if not argv:
+            return {"ok": False, "error": "Empty command",
+                    "duration_ms": 0, "returncode": -1, "stdout": "", "stderr": ""}
+        for tok in argv[1:]:
+            if tok in (";", "&&", "||", "|", "`", ">", "<", "$", "$("):
+                return {"ok": False, "error": "Shell metacharacter not allowed",
+                        "duration_ms": 0, "returncode": -1, "stdout": "", "stderr": ""}
+            if "$(" in tok or "`" in tok:
+                return {"ok": False, "error": "Shell expansion not allowed",
+                        "duration_ms": 0, "returncode": -1, "stdout": "", "stderr": ""}
+        if argv[0].lower() == "echo":
+            return {"ok": True, "stdout": " ".join(argv[1:]),
+                    "stderr": "", "returncode": 0,
+                    "duration_ms": int((time.time() - start) * 1000)}
         result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+            argv, shell=False, capture_output=True, text=True, timeout=timeout
         )
         duration = int((time.time() - start) * 1000)
         return {

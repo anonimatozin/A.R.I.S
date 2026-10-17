@@ -6,10 +6,18 @@ from core.gmail.service import (
     MessageDetail,
     GMAIL_SCOPES,
 )
+from core.gmail.manager import (
+    GmailManager,
+    GmailAccountConfig,
+    AccountStatus,
+)
 
 __all__ = [
     "GmailService",
     "MessageSummary",
     "MessageDetail",
     "GMAIL_SCOPES",
+    "GmailManager",
+    "GmailAccountConfig",
+    "AccountStatus",
 ]

@@ -29,6 +29,9 @@ class Logger:
         self._logger = logging.getLogger(name)
         self._logger.setLevel(getattr(logging, level.upper(), logging.INFO))
         self._logger.handlers.clear()
+        # Sem propagate: senão mensagens sobem pro logger raiz e saem
+        # DUPLICADAS quando o root tem handler (ex.: basicConfig).
+        self._logger.propagate = False
 
         self._setup_console_handler()
         if log_dir is not None:

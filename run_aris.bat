@@ -8,9 +8,9 @@ echo Iniciando A.R.I.S. ...
 echo.
 
 if exist venv\Scripts\python.exe (
-    venv\Scripts\python.exe main.py
+    venv\Scripts\python.exe cll1/main.py %*
 ) else (
-    python main.py
+    python cll1/main.py %*
 )
 
 echo.

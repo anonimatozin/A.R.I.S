@@ -87,6 +87,23 @@ class PerceptionConfig:
     hardware_enabled: bool = True
     hardware_interval: float = 8.0
 
+    # Voz contínua (novo)
+    continuous_voice_enabled: bool = False
+    continuous_voice_wake_words: tuple[str, ...] = ("aris", "arís", "ariz", "arizs")
+    continuous_voice_vad_aggressiveness: int = 2
+    continuous_voice_sample_rate: int = 16000
+    continuous_voice_frame_duration_ms: int = 30
+    continuous_voice_silence_timeout_ms: int = 1200
+    continuous_voice_min_speech_ms: int = 300
+    continuous_voice_max_speech_ms: int = 30000
+    continuous_voice_stt_model: str = "tiny"
+    continuous_voice_stt_device: str = "cpu"
+    continuous_voice_stt_compute_type: str = "int8"
+    continuous_voice_vosk_model_path: str = "vosk-model-pt"
+    continuous_voice_language: str = "pt"
+    continuous_voice_min_confidence: float = 0.35
+    continuous_voice_cooldown_ms: int = 1000
+
     @classmethod
     def load(cls) -> PerceptionConfig:
         """Carrega a configuração a partir do ambiente."""
@@ -119,6 +136,23 @@ class PerceptionConfig:
             network_timeout=_env_float("ARIS_NETWORK_TIMEOUT", 3.0),
             hardware_enabled=_env_bool("ARIS_HARDWARE_ENABLED", True),
             hardware_interval=_env_float("ARIS_HARDWARE_INTERVAL", 8.0),
+            continuous_voice_enabled=_env_bool("ARIS_CONTINUOUS_VOICE_ENABLED", False),
+            continuous_voice_wake_words=tuple(
+                w.strip() for w in os.getenv("ARIS_CONTINUOUS_VOICE_WAKE_WORDS", "aris,arís,ariz,arizs").split(",") if w.strip()
+            ),
+            continuous_voice_vad_aggressiveness=_env_int("ARIS_CONTINUOUS_VOICE_VAD_AGGRESSIVENESS", 2),
+            continuous_voice_sample_rate=_env_int("ARIS_CONTINUOUS_VOICE_SAMPLE_RATE", 16000),
+            continuous_voice_frame_duration_ms=_env_int("ARIS_CONTINUOUS_VOICE_FRAME_DURATION_MS", 30),
+            continuous_voice_silence_timeout_ms=_env_int("ARIS_CONTINUOUS_VOICE_SILENCE_TIMEOUT_MS", 1200),
+            continuous_voice_min_speech_ms=_env_int("ARIS_CONTINUOUS_VOICE_MIN_SPEECH_MS", 300),
+            continuous_voice_max_speech_ms=_env_int("ARIS_CONTINUOUS_VOICE_MAX_SPEECH_MS", 30000),
+            continuous_voice_stt_model=os.getenv("ARIS_CONTINUOUS_VOICE_STT_MODEL", "tiny"),
+            continuous_voice_stt_device=os.getenv("ARIS_CONTINUOUS_VOICE_STT_DEVICE", "cpu"),
+            continuous_voice_stt_compute_type=os.getenv("ARIS_CONTINUOUS_VOICE_STT_COMPUTE_TYPE", "int8"),
+            continuous_voice_vosk_model_path=os.getenv("ARIS_CONTINUOUS_VOICE_VOSK_MODEL_PATH", "vosk-model-pt"),
+            continuous_voice_language=os.getenv("ARIS_CONTINUOUS_VOICE_LANGUAGE", "pt"),
+            continuous_voice_min_confidence=_env_float("ARIS_CONTINUOUS_VOICE_MIN_CONFIDENCE", 0.35),
+            continuous_voice_cooldown_ms=_env_int("ARIS_CONTINUOUS_VOICE_COOLDOWN_MS", 1000),
         )
 
     def update_env(self, **overrides: object) -> PerceptionConfig:

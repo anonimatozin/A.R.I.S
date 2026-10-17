@@ -1,0 +1,111 @@
+{
+  "modo": "scripted",
+  "gerado_em": "2026-10-16 15:22:47",
+  "resumo": {
+    "total": 96,
+    "sucessos": 96,
+    "taxa": 1.0,
+    "tokens_total": 136966
+  },
+  "categorias": {
+    "arquivos": {
+      "total": 10,
+      "sucessos": 10,
+      "taxa": 1.0,
+      "passos_medios": 2.0,
+      "tokens_total": 15289,
+      "duracao_media_s": 0.061,
+      "falhas": {}
+    },
+    "codigo": {
+      "total": 6,
+      "sucessos": 6,
+      "taxa": 1.0,
+      "passos_medios": 2.33,
+      "tokens_total": 12917,
+      "duracao_media_s": 0.037,
+      "falhas": {}
+    },
+    "conta": {
+      "total": 8,
+      "sucessos": 8,
+      "taxa": 1.0,
+      "passos_medios": 2.0,
+      "tokens_total": 11800,
+      "duracao_media_s": 0.008,
+      "falhas": {}
+    },
+    "contexto": {
+      "total": 5,
+      "sucessos": 5,
+      "taxa": 1.0,
+      "passos_medios": 1.0,
+      "tokens_total": 3834,
+      "duracao_media_s": 0.004,
+      "falhas": {}
+    },
+    "conversa": {
+      "total": 8,
+      "sucessos": 8,
+      "taxa": 1.0,
+      "passos_medios": 1.0,
+      "tokens_total": 5946,
+      "duracao_media_s": 0.003,
+      "falhas": {}
+    },
+    "identidade": {
+      "total": 6,
+      "sucessos": 6,
+      "taxa": 1.0,
+      "passos_medios": 1.0,
+      "tokens_total": 4471,
+      "duracao_media_s": 0.003,
+      "falhas": {}
+    },
+    "memoria": {
+      "total": 6,
+      "sucessos": 6,
+      "taxa": 1.0,
+      "passos_medios": 2.17,
+      "tokens_total": 9949,
+      "duracao_media_s": 0.006,
+      "falhas": {}
+    },
+    "pesquisa": {
+      "total": 8,
+      "sucessos": 8,
+      "taxa": 1.0,
+      "passos_medios": 2.25,
+      "tokens_total": 14715,
+      "duracao_media_s": 0.513,
+      "falhas": {}
+    },
+    "recado": {
+      "total": 5,
+      "sucessos": 5,
+      "taxa": 1.0,
+      "passos_medios": 1.4,
+      "tokens_total": 5366,
+      "duracao_media_s": 0.01,
+      "falhas": {}
+    },
+    "seguranca": {
+      "total": 28,
+      "sucessos": 28,
+      "taxa": 1.0,
+      "passos_medios": 2.04,
+      "tokens_total": 43311,
+      "duracao_media_s": 0.025,
+      "falhas": {}
+    },
+    "skills": {
+      "total": 6,
+      "sucessos": 6,
+      "taxa": 1.0,
+      "passos_medios": 2.0,
+      "tokens_total": 9368,
+      "duracao_media_s": 0.005,
+      "falhas": {}
+    }
+  }
+}

@@ -55,11 +55,13 @@ class Router:
         pc_port: int | None = None,
         pc_token: str | None = None,
         logger: Logger | None = None,
+        event_bus: object | None = None,
     ) -> None:
         self._pc_host = pc_host or os.getenv("CLL1_HOST", "192.168.0.106")
         self._pc_port = int(pc_port or os.getenv("CLL1_PORT", "8765"))
         self._pc_token = pc_token or os.getenv("CLL1_TOKEN", "")
         self._logger = logger
+        self._event_bus = event_bus
         self._state = RouterState()
         self._edge: EdgeChat | None = None
         self._on_pc_message: Any = None
@@ -87,10 +89,14 @@ class Router:
         """Define callback para enviar mensagens ao PC."""
         self._on_pc_message = handler
 
-    def check_pc_online(self) -> bool:
-        """Verifica se o PC esta acessivel via TCP."""
+    def check_pc_online(self, force: bool = False) -> bool:
+        """Verifica se o PC esta acessivel via TCP.
+
+        Args:
+            force: Se True, ignora o cache e faz check imediato.
+        """
         now = time.time()
-        if now - self._state.last_check < self._state.check_interval:
+        if not force and now - self._state.last_check < self._state.check_interval:
             return self._state.pc_online
 
         self._state.last_check = now
@@ -108,6 +114,7 @@ class Router:
                 self._state.instance = "primary"
                 if was_offline:
                     self._start_transition("primary")
+                    self._publish_event("pc_status", {"online": True, "mode": "primary"})
                 self._update_mode_manager(True)
                 return True
             else:
@@ -118,6 +125,7 @@ class Router:
                     self._state.instance = "edge"
                     if was_online:
                         self._start_transition("edge")
+                        self._publish_event("pc_status", {"online": False, "mode": "edge"})
                 self._update_mode_manager(self._state.pc_online)
                 return self._state.pc_online
 
@@ -129,6 +137,7 @@ class Router:
                 self._state.instance = "edge"
                 if was_online:
                     self._start_transition("edge")
+                    self._publish_event("pc_status", {"online": False, "mode": "edge"})
             self._update_mode_manager(self._state.pc_online)
             return self._state.pc_online
 
@@ -162,13 +171,55 @@ class Router:
             except Exception:
                 pass
 
+        # Publicar evento de transicao de modo
+        self._publish_event("mode_transition", {"from": old_owner, "to": new_owner})
+
+    def _publish_event(self, event_type: str, payload: dict) -> None:
+        """Publica evento no event bus local para dashboard em tempo real."""
+        if self._event_bus is not None:
+            try:
+                from core.neural.events import Event
+                event = Event(
+                    event_type=event_type,
+                    source="router",
+                    payload=payload,
+                    priority=50,
+                    confidence=1.0,
+                )
+                self._event_bus.publish(event)
+            except Exception:
+                pass
+
     def route_message(self, text: str, origin_info: dict) -> str:
         """Roteia mensagem com garantia de instancia unica.
 
         Durante transicao, a instancia antiga pode ainda ter mensagens
         pendentes — essas sao processadas pela nova instancia.
         """
-        pc_online = self.check_pc_online()
+        # Verificar se o usuário está contestando o estado do PC
+        # Ex: "mas o PC está ligado", "o PC tá ligado sim", "PC tá online"
+        text_lower = text.lower().strip()
+        contest_keywords = [
+            "mas o pc", "mas o computador", "o pc ta", "o pc está",
+            "pc ta ligado", "pc está ligado", "computador ta ligado",
+            "pc online", "pc ta online", "pc ligado", "ta ligado"
+        ]
+        is_contesting = any(kw in text_lower for kw in contest_keywords)
+        
+        if contest_keywords and any(kw in text_lower for kw in ["ligado", "online", "funcionando", "aceso"]):
+            is_contesting = True
+        
+        # Se usuário contesta, forçar re-check imediato ignorando cache
+        if is_contesting:
+            self._logger.info(f"Usuário contestando estado do PC: '{text}' — forçando re-check")
+            pc_online = self.check_pc_online(force=True)
+            # Responder ao usuário com o estado real
+            if pc_online:
+                return "Você tem razão! O PC está **online** agora. O modo é PRIMARY."
+            else:
+                return "Verifiquei e o PC continua **offline**. Se acabou de ligar, aguarde alguns segundos para o heartbeat detectar."
+        else:
+            pc_online = self.check_pc_online()
 
         with self._lock:
             owner = self._active_owner

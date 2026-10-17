@@ -13,8 +13,9 @@ MAX_OUTPUT = 100_000
 DEFAULT_ALLOWLIST = [
     "ls", "cat", "head", "tail", "wc", "grep", "find", "df", "du",
     "ps", "top", "uptime", "date", "echo", "pwd", "whoami", "id",
-    "env", "printenv", "which", "file", "stat", "sv", "ping",
+    "which", "file", "stat", "sv", "ping",
 ]
+# Removidos do allowlist: env/printenv (vazam segredos do processo).
 
 
 def run_command(
@@ -36,9 +37,13 @@ def run_command(
         }
 
     try:
+        import shlex as _shlex
+        argv = _shlex.split(validated)
+        if not argv:
+            return {"ok": False, "error": "Empty command", "exit_code": -1, "duration_ms": 0}
         result = subprocess.run(
-            validated,
-            shell=True,
+            argv,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=timeout,

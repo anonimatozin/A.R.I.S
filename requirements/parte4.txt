@@ -1,0 +1,5 @@
+# Parte 4 — Memória de longo prazo
+# Sem dependências externas: usa apenas sqlite3 da biblioteca padrão do Python 3.12
+# (FTS5 confirmado disponível no SQLite 3.49.1 desta máquina; sem FTS5 o código
+# cai para LIKE com aviso em log). Nada de modelo de embedding (CPU fraca).
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

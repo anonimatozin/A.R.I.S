@@ -71,6 +71,49 @@ class ActionEngine:
             return False, "capacidade não localizada"
         return True, ""
 
+    # Marcadores que denotam FALHA real numa resposta textual de ferramenta.
+    # Motivo: os handlers devolvem strings livres; sem esta convenção, uma
+    # ação que falhou (ex.: "Ação desconhecida: abrir") era classificada como
+    # sucesso e a ARIS confirmava em voz algo que não aconteceu.
+    _FAILURE_MARKERS = (
+        "ação desconhecida",
+        "acao desconhecida",
+        "não encontrado",
+        "nao encontrado",
+        "indisponível",
+        "indisponivel",
+        "não instalado",
+        "nao instalado",
+        "não foi possível",
+        "nao foi possivel",
+        "não pôde",
+        "nao pode",
+        "falha ao",
+        "erro ao",
+        "erro:",
+        "entrada rejeitada",
+        "senha incorreta",
+        "cancelada pelo operador",
+        "vazio",
+        "sem permissão",
+        "sem permissao",
+        "negada",
+        "requer confirmação",
+        "requer confirmacao",
+        "não disponível",
+        "nao disponivel",
+        "não implementado",
+        "nao implementado",
+        "não suportado",
+        "nao suportado",
+    )
+
+    @classmethod
+    def _looks_like_failure(cls, output: str) -> bool:
+        """Detecta se uma resposta textual de ferramenta denota falha."""
+        low = output.lower()
+        return any(marker in low for marker in cls._FAILURE_MARKERS)
+
     def execute(self, decision: Decision, ctx: dict[str, Any] | None = None) -> ActionResult:
         """Executa a decisão e captura resultado/erro."""
         start = time.perf_counter()
@@ -111,10 +154,14 @@ class ActionEngine:
 
         if isinstance(result, str):
             output = result
-            success = "não encontrado" not in output.lower() and "indisponível" not in output.lower()
+            # Honesty: uma resposta textual que denota falha NÃO é sucesso.
+            success = not self._looks_like_failure(output)
         else:
             output = str(result) if result is not None else ""
             success = result is not None
+
+        if not success:
+            self._failures += 1
 
         if self._logger:
             self._logger.debug(

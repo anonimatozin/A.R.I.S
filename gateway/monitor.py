@@ -1,11 +1,15 @@
-"""System metrics and monitoring."""
+"""System metrics and monitoring — cross-platform via psutil."""
 
 from __future__ import annotations
 
-import os
-import subprocess
 import time
 from typing import Any
+
+try:
+    import psutil as _psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 
 def get_metrics() -> dict[str, Any]:
@@ -21,57 +25,61 @@ def get_metrics() -> dict[str, Any]:
 
 
 def _get_uptime() -> str:
-    try:
-        with open("/proc/uptime") as f:
-            seconds = float(f.read().split()[0])
-            hours = int(seconds // 3600)
-            mins = int((seconds % 3600) // 60)
+    if HAS_PSUTIL:
+        try:
+            seconds = int(time.time() - _psutil.boot_time())
+            hours = seconds // 3600
+            mins = (seconds % 3600) // 60
             return f"{hours}h {mins}m"
-    except Exception:
-        return "unknown"
+        except Exception:
+            pass
+    return "unknown"
 
 
 def _get_cpu() -> dict[str, Any]:
-    try:
-        with open("/proc/stat") as f:
-            parts = f.readline().split()
-        idle = int(parts[4])
-        total = sum(int(x) for x in parts[1:])
-        return {"idle": idle, "total": total, "percent": round(100 * (1 - idle / max(total, 1)), 1)}
-    except Exception:
-        return {"percent": 0}
+    if HAS_PSUTIL:
+        try:
+            percent = _psutil.cpu_percent(interval=0.1)
+            return {"percent": round(percent, 1)}
+        except Exception:
+            pass
+    return {"percent": 0}
 
 
 def _get_memory() -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            ["free", "-m"], capture_output=True, text=True, timeout=5
-        )
-        lines = result.stdout.strip().split("\n")
-        parts = lines[1].split()
-        total = int(parts[1])
-        used = int(parts[2])
-        return {"total_mb": total, "used_mb": used, "percent": round(100 * used / max(total, 1), 1)}
-    except Exception:
-        return {"total_mb": 0, "used_mb": 0, "percent": 0}
+    if HAS_PSUTIL:
+        try:
+            mem = _psutil.virtual_memory()
+            return {
+                "total_mb": round(mem.total / (1024 * 1024)),
+                "used_mb": round(mem.used / (1024 * 1024)),
+                "percent": round(mem.percent, 1),
+            }
+        except Exception:
+            pass
+    return {"total_mb": 0, "used_mb": 0, "percent": 0}
 
 
 def _get_disk() -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            ["df", "-m", "/"], capture_output=True, text=True, timeout=5
-        )
-        lines = result.stdout.strip().split("\n")
-        parts = lines[1].split()
-        total = int(parts[1])
-        used = int(parts[2])
-        return {"total_mb": total, "used_mb": used, "percent": round(100 * used / max(total, 1), 1)}
-    except Exception:
-        return {"total_mb": 0, "used_mb": 0, "percent": 0}
+    if HAS_PSUTIL:
+        try:
+            import sys as _sys
+            path = "C:\\" if _sys.platform == "win32" else "/"
+            disk = _psutil.disk_usage(path)
+            return {
+                "total_mb": round(disk.total / (1024 * 1024)),
+                "used_mb": round(disk.used / (1024 * 1024)),
+                "percent": round(disk.percent, 1),
+            }
+        except Exception:
+            pass
+    return {"total_mb": 0, "used_mb": 0, "percent": 0}
 
 
 def _get_process_count() -> int:
-    try:
-        return len(os.listdir("/proc"))
-    except Exception:
-        return 0
+    if HAS_PSUTIL:
+        try:
+            return len(_psutil.pids())
+        except Exception:
+            pass
+    return 0

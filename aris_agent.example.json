@@ -1,0 +1,52 @@
+{
+  "agent_enabled": false,
+  "workspace_dir": "~/ARIS_workspace",
+  "data_dir": "~/.aris_agent",
+  "allowed_roots": ["~/ARIS_workspace"],
+  "max_steps": 12,
+  "max_tool_chars": 8000,
+  "max_total_tokens_per_task": 60000,
+  "confirm_timeout_s": 30.0,
+  "sections": {
+    "llm": {
+      "providers": {
+        "groq": {
+          "base_url": "https://api.groq.com/openai/v1",
+          "api_key_env": "GROQ_API_KEY",
+          "models": ["openai/gpt-oss-120b"],
+          "tool_mode": "native",
+          "timeout_s": 60,
+          "limits": {
+            "requests_per_minute": 30,
+            "tokens_per_minute": 30000
+          }
+        },
+        "ollama_local": {
+          "base_url": "http://127.0.0.1:11434/v1",
+          "api_key_env": null,
+          "models": ["qwen2.5:3b"],
+          "enabled": false
+        }
+      },
+      "chains": {
+        "easy": ["groq:openai/gpt-oss-120b"],
+        "normal": ["groq:openai/gpt-oss-120b"],
+        "hard": ["groq:openai/gpt-oss-120b"]
+      },
+      "max_wait_s": 10,
+      "failure_threshold": 3,
+      "cooldown_s": 60
+    },
+    "safety": {
+      "mode": "strict",
+      "exec_per_minute": 10,
+      "exec_per_task": 40,
+      "confirm_timeout_s": 30,
+      "enable_hotkey": false,
+      "hotkey": "ctrl+alt+F12"
+    },
+    "web": {
+      "test_allow_local": false
+    }
+  }
+}

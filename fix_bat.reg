@@ -1,0 +1,14 @@
+Windows Registry Editor Version 5.00
+
+; Restaura abertura de .bat (remove escolha errada de programa)
+[-HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.bat\UserChoice]
+
+[HKEY_CURRENT_USER\Software\Classes\.bat]
+@="batfile"
+
+[HKEY_CURRENT_USER\Software\Classes\batfile\shell\open\command]
+@="\"%1\" %*"
+
+; Remove bloqueio do cmd por politica (se existir)
+[HKEY_CURRENT_USER\Software\Policies\Microsoft\Windows\System]
+"DisableCMD"=-

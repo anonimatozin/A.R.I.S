@@ -50,6 +50,8 @@ class VisionConfig:
         ocr_enabled: OCR via Tesseract habilitado.
         vlm_enabled: Modelo de visão (VLM) habilitado.
         camera_enabled: Câmera habilitada (default False — sem hardware).
+        face_enabled: Reconhecimento facial habilitado (requer face_recognition + câmera).
+        gesture_enabled: Detecção de gestos de mão habilitada (requer mediapipe + câmera).
         vlm_provider: Provedor do VLM (``ollama`` ou ``google``).
         vlm_model: Modelo de visão (``""`` = autodetectar em Ollama).
         ollama_base_url: URL base da API do Ollama.
@@ -65,6 +67,8 @@ class VisionConfig:
     ocr_enabled: bool = True
     vlm_enabled: bool = True
     camera_enabled: bool = False
+    face_enabled: bool = False
+    gesture_enabled: bool = False
     vlm_provider: str = "ollama"
     vlm_model: str = ""
     ollama_base_url: str = "http://localhost:11434"
@@ -88,6 +92,8 @@ class VisionConfig:
             ocr_enabled=_env_bool("ARIS_OCR_ENABLED", True),
             vlm_enabled=_env_bool("ARIS_VLM_ENABLED", True),
             camera_enabled=_env_bool("ARIS_VISION_CAMERA_ENABLED", False),
+            face_enabled=_env_bool("ARIS_VISION_FACE_ENABLED", False),
+            gesture_enabled=_env_bool("ARIS_VISION_GESTURE_ENABLED", False),
             vlm_provider=os.getenv("ARIS_VLM_PROVIDER", "ollama").strip().lower() or "ollama",
             vlm_model=os.getenv("ARIS_VLM_MODEL", "").strip(),
             ollama_base_url=os.getenv("ARIS_OLLAMA_BASE_URL", "http://localhost:11434"),
@@ -115,6 +121,8 @@ class VisionConfig:
             f"ARIS_OCR_ENABLED={self.ocr_enabled}",
             f"ARIS_VLM_ENABLED={self.vlm_enabled}",
             f"ARIS_VISION_CAMERA_ENABLED={self.camera_enabled}",
+            f"ARIS_VISION_FACE_ENABLED={self.face_enabled}",
+            f"ARIS_VISION_GESTURE_ENABLED={self.gesture_enabled}",
             f"ARIS_VLM_PROVIDER={self.vlm_provider}",
             f"ARIS_VLM_MODEL={self.vlm_model}",
             f"ARIS_OLLAMA_BASE_URL={self.ollama_base_url}",

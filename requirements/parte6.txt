@@ -1,0 +1,3 @@
+# Parte 6 — Skills (SkillLibrary, ferramentas e skills iniciais)
+# Sem dependências externas: parser de frontmatter próprio, só biblioteca padrão.
+# pytest e ruff já vêm de requirements.txt / extras [dev] do projeto.

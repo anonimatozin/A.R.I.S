@@ -32,6 +32,8 @@ from core.vision.result import OcrResult, VisionAnalysis, VisionResult
 from core.vision.sources.camera_source import CameraSource
 from core.vision.sources.screen_source import ScreenSource
 from core.vision.vlm import VisionLanguageModel
+from core.vision.face_recognition import FaceRecognizer
+from core.vision.gestures import HandGestureRecognizer, DetectedGesture, GestureType
 
 try:  # pragma: no cover
     from PIL import Image
@@ -54,6 +56,7 @@ class VisionEngine:
         logger: Any = None,
         config: VisionConfig | None = None,
         memory: Any = None,
+        kg: Any = None,
     ) -> None:
         self._config = config or VisionConfig.load()
         self._logger = logger
@@ -63,7 +66,16 @@ class VisionEngine:
         self._ocr = TesseractEngine(logger=logger)
         self._vlm = VisionLanguageModel(self._config, logger=logger)
         self._memory = memory
+        self._kg = kg
         self._lock = threading.Lock()
+
+        # Face recognition
+        self._face_recognizer: FaceRecognizer | None = None
+        self._face_enabled = self._config.face_enabled if hasattr(self._config, "face_enabled") else False
+
+        # Hand gestures
+        self._gesture_recognizer: HandGestureRecognizer | None = None
+        self._gesture_enabled = self._config.gesture_enabled if hasattr(self._config, "gesture_enabled") else False
 
     # ------------------------------------------------------------- dependecias --#
     @property
@@ -316,11 +328,163 @@ class VisionEngine:
             return "Câmera detectada, mas desabilitada (ARIS_VISION_CAMERA_ENABLED=false)."
         return "Câmera não disponível neste dispositivo (sem hardware detectado)."
 
+    # --------------------------------------------------------- face recognition --#
+
+    def start_face_recognition(self) -> bool:
+        """Inicia reconhecimento facial contínuo (requer câmera ativa)."""
+        if not self._face_enabled:
+            self._log("info", "Reconhecimento facial desabilitado na config (ARIS_VISION_FACE_ENABLED=true).")
+            return False
+        if self._face_recognizer is not None:
+            self._log("info", "Reconhecimento facial já ativo.")
+            return True
+
+        def _on_unknown_face(image: Any, encoding: list[float]) -> str | None:
+            """Callback para rostos desconhecidos - pede consentimento via TTS/texto."""
+            self._log("info", "Rosto desconhecido detectado - solicitando consentimento")
+            
+            # Publica evento para HUD solicitar consentimento
+            if self._bus:
+                try:
+                    from core.neural.events import Event, PRIORITY_HIGH
+                    # Converter imagem para base64 se disponível
+                    import base64
+                    from io import BytesIO
+                    img_b64 = ""
+                    if image and Image:
+                        buf = BytesIO()
+                        image.save(buf, format='JPEG')
+                        img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    
+                    self._bus.publish(Event(
+                        event_type=EVENT_VISION_FACE_DETECTED,
+                        source="vision",
+                        priority=PRIORITY_HIGH,
+                        confidence=0.8,
+                        payload={
+                            "face_image": img_b64,
+                            "encoding": encoding,
+                        },
+                    ))
+                except Exception:
+                    pass
+            
+            # Retornar None para não salvar sem consentimento
+            # Em implementação real, isso dispararia TTS/prompt
+            return None
+
+        self._face_recognizer = FaceRecognizer(
+            camera=self._camera,
+            kg_client=self._kg,
+            logger=self._logger,
+            event_bus=self._bus,
+            on_unknown_face=_on_unknown_face,
+        )
+        return self._face_recognizer.start()
+
+    def stop_face_recognition(self) -> None:
+        """Para reconhecimento facial."""
+        if self._face_recognizer:
+            self._face_recognizer.stop()
+            self._face_recognizer = None
+            self._log("info", "Reconhecimento facial parado.")
+
+    # --------------------------------------------------------- hand gestures --#
+
+    def start_gesture_recognition(self) -> bool:
+        """Inicia detecção de gestos de mão (requer câmera ativa)."""
+        if not self._gesture_enabled:
+            self._log("info", "Detecção de gestos desabilitada na config (ARIS_VISION_GESTURE_ENABLED=true).")
+            return False
+        if self._gesture_recognizer is not None:
+            self._log("info", "Detecção de gestos já ativa.")
+            return True
+
+        def _on_gesture(gesture: DetectedGesture) -> None:
+            """Callback para gestos detectados."""
+            self._log("info", f"Gesto detectado: {gesture.gesture.value} ({gesture.hand_side}) - conf: {gesture.confidence:.2f}")
+            # Publicar evento no bus se disponível
+            if self._bus:
+                try:
+                    from core.neural.events import Event, PRIORITY_LOW, EVENT_VISION_GESTURE_DETECTED
+                    self._bus.publish(Event(
+                        event_type=EVENT_VISION_GESTURE_DETECTED,
+                        source="vision",
+                        priority=PRIORITY_LOW,
+                        confidence=gesture.confidence,
+                        payload={
+                            "gesture": gesture.gesture.value,
+                            "hand_side": gesture.hand_side,
+                            "confidence": gesture.confidence,
+                            "timestamp": gesture.timestamp,
+                        },
+                    ))
+                except Exception:
+                    pass
+
+        self._gesture_recognizer = HandGestureRecognizer(
+            camera=self._camera,
+            logger=self._logger,
+            on_gesture=_on_gesture,
+        )
+        return self._gesture_recognizer.start()
+
+    def stop_gesture_recognition(self) -> None:
+        """Para detecção de gestos de mão."""
+        if self._gesture_recognizer:
+            self._gesture_recognizer.stop()
+            self._gesture_recognizer = None
+            self._log("info", "Detecção de gestos parada.")
+
+    def get_last_gesture(self) -> Optional[dict[str, Any]]:
+        """Retorna último gesto detectado."""
+        if self._gesture_recognizer is None or self._gesture_recognizer._last_gesture is None:
+            return None
+        g = self._gesture_recognizer._last_gesture
+        return {
+            "gesture": g.gesture.value,
+            "hand_side": g.hand_side,
+            "confidence": round(g.confidence, 3),
+            "timestamp": g.timestamp,
+        }
+
+    def get_recognized_faces(self) -> list[dict[str, Any]]:
+        """Retorna rostos reconhecidos no frame atual."""
+        if self._face_recognizer is None:
+            return []
+        identities = self._face_recognizer.get_current_identities()
+        return [
+            {
+                "entity_id": ident.entity_id,
+                "name": ident.name,
+                "confidence": round(ident.confidence, 3),
+                "known": ident.known,
+                "last_seen": ident.last_seen,
+            }
+            for ident in identities
+        ]
+
+    def get_known_people(self) -> list[dict[str, Any]]:
+        """Lista pessoas conhecidas no sistema."""
+        if self._face_recognizer is None:
+            return []
+        return self._face_recognizer.get_known_people()
+
     def get_status(self) -> dict[str, Any]:
         return {
             "enabled": self._config.enabled,
             "screen": self._screen.get_status(),
             "camera": self._camera.get_status(),
+            "face": {
+                "enabled": self._face_enabled,
+                "active": self._face_recognizer is not None,
+                "known_people": len(self.get_known_people()),
+            },
+            "gestures": {
+                "enabled": self._gesture_enabled,
+                "active": self._gesture_recognizer is not None,
+                "last_gesture": self.get_last_gesture(),
+            },
             "ocr": self._ocr.get_status(),
             "vlm": self._vlm.get_status(),
             "save_images": self._config.save_images,
@@ -334,6 +498,8 @@ class VisionEngine:
             f"  Estado geral: {'ativo' if status['enabled'] else 'desativado'}",
             f"  Tela: {'disponível' if status['screen']['available'] else 'não disponível'} ({status['screen'].get('monitors', 1)} monitor(es))",
             f"  Câmera: {'disponível' if status['camera']['available'] else 'não disponível'}",
+            f"  Rosto: {'ativo' if status['face']['active'] else 'inativo'} ({status['face']['known_people']} conhecidos)",
+            f"  Gestos: {'ativo' if status['gestures']['active'] else 'inativo'}",
             f"  OCR (Tesseract): {'ativo' if status['ocr']['available'] else 'não ativo'}",
             f"  VLM ({status['vlm']['provider']}): {'ativo' if status['vlm']['available'] else 'não ativo'}",
             f"  Salvar capturas: {'sim' if status['save_images'] else 'não'} (privacidade)",

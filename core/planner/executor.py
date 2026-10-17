@@ -7,10 +7,9 @@ condições e horários. Integra com o ToolRegistry existente.
 from __future__ import annotations
 
 import logging
-import subprocess
-import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from .models import (
     ActionStatus,
@@ -245,42 +244,43 @@ class PlanExecutor:
         return {"status": "no_executor", "message": "No executor available"}
 
     def _execute_pc_command(self, action: PlanAction) -> dict[str, Any]:
-        """Executa comando no PC via listener HTTP."""
+        """Executa ação no PC via listener HTTP (lista fixa de ações).
+
+        O payload é montado por ``build_pc_payload`` — só ações da lista
+        ALLOWED_COMMANDS saem daqui; nenhum código/comando livre do LLM.
+        """
         if not self._pc_url:
             return {"status": "error", "message": "PC listener URL not configured"}
 
         import json
         import urllib.request
 
-        command = action.parameters.get("command", "")
-        if not command:
-            # Mapear action type para comando
-            cmd_map = {
-                ActionType.SHUTDOWN: "shutdown /s /t 0",
-                ActionType.RESTART: "shutdown /r /t 0",
-                ActionType.LOCK: "rundll32.exe user32.dll,LockWorkStation",
-                ActionType.SLEEP: "rundll32.exe powrprof.dll,SetSuspendState 0,1,0",
+        from agent.pc_actions import build_pc_payload
+
+        payload = build_pc_payload(action.action_type.value, action.parameters)
+        if payload is None:
+            return {
+                "status": "error",
+                "message": (
+                    f"Ação '{action.action_type.value}' fora da lista "
+                    "permitida de comandos do PC"
+                ),
             }
-            command = cmd_map.get(action.action_type, "")
 
-        if not command:
-            return {"status": "error", "message": "No command to execute"}
-
-        payload = json.dumps({
-            "command": "exec",
-            "code": command,
-        }).encode()
+        data = json.dumps(payload).encode()
 
         req = urllib.request.Request(
             f"{self._pc_url}/status",
-            data=payload,
+            data=data,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
 
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-            return data
+            body = json.loads(resp.read())
+            if isinstance(body, dict):
+                return body
+            return {"status": "error", "message": "resposta inválida do PC listener"}
 
     def _skip_dependents(self, plan: ExecutionPlan, failed_actions: list[PlanAction]) -> None:
         """Marca ações dependentes como skipped."""

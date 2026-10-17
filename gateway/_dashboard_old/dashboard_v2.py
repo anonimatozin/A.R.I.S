@@ -1,0 +1,467 @@
+import os
+
+BASE = r"C:\Users\Administrator\Documents\Default Project\ARIS\gateway"
+OUT = os.path.join(BASE, "dashboard.html")
+
+# ─── CSS ──────────────────────────────────────────────────────────────
+CSS = r"""
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#e0e0e0;position:relative}
+canvas#neural-bg{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
+
+/* ─── SIDEBAR (hamburger) ─── */
+.sidebar{width:64px;background:#0a0a0f;border-right:1px solid #1a1a2e;display:flex;flex-direction:column;align-items:center;padding:10px 0;flex-shrink:0;transition:width .3s;z-index:100}
+.sidebar.exp{width:280px}
+.sidebar .logo{font-size:20px;font-weight:700;color:#00d4ff;letter-spacing:2px;margin:4px 0 8px;white-space:nowrap;overflow:hidden}
+.sidebar .sub{font-size:9px;color:#555;white-space:nowrap;overflow:hidden;margin-bottom:6px}
+.sb-toggle{margin:6px 0 12px;cursor:pointer;color:#555;font-size:22px;transition:color .2s}
+.sb-toggle:hover{color:#00d4ff}
+.sb-nav{flex:1;overflow-y:auto;padding:2px 0;width:100%}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;font-size:12px;color:#555;transition:all .15s;white-space:nowrap;border-left:2px solid transparent}
+.nav-item:hover{background:#12121a;color:#ccc}
+.nav-item.active{background:#12121a;color:#00d4ff;border-left-color:#00d4ff}
+.nav-item .ico{width:20px;text-align:center;font-size:14px;flex-shrink:0}
+.sb-footer{padding:10px 14px;border-top:1px solid #1a1a2e;font-size:9px;color:#444;white-space:nowrap;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative;z-index:1}
+
+/* ─── VIEWS ─── */
+.view{display:none;flex:1;height:100%}
+.view.active{display:flex}
+
+/* ─── 1) VOICE INTERFACE (fullscreen) ─── */
+#view-voice{flex-direction:column;align-items:center;justify-content:center;background:#000;position:relative}
+.v-title{font-size:13px;font-weight:300;letter-spacing:4px;color:#fff;text-transform:uppercase;position:absolute;top:50px;left:50%;transform:translateX(-50%);z-index:2}
+.v-listening{position:absolute;bottom:90px;left:50%;transform:translateX(-50%);color:#666;font-size:15px;z-index:2;letter-spacing:2px}
+.v-mic{width:130px;height:130px;border-radius:50%;border:3px solid #00d4ff;background:rgba(0,212,255,.05);display:flex;align-items:center;justify-content:center;font-size:44px;cursor:pointer;z-index:2;position:relative;transition:all .3s;box-shadow:0 0 40px rgba(0,212,255,.2)}
+.v-mic:hover{background:rgba(0,212,255,.15);box-shadow:0 0 60px rgba(0,212,255,.4)}
+.v-mic.pulse{animation:mp 2s infinite}
+@keyframes mp{0%{box-shadow:0 0 0 0 rgba(0,212,255,.6)}70%{box-shadow:0 0 0 30px rgba(0,212,255,0)}100%{box-shadow:0 0 0 0 rgba(0,212,255,0)}}
+
+/* ─── 2) NEURAL NETWORK (fullscreen) ─── */
+#view-neural{flex-direction:column;background:#000;position:relative}
+.d-ham{position:absolute;top:16px;left:16px;z-index:10;cursor:pointer;color:#00d4ff;font-size:22px;padding:6px}
+.d-btns{position:absolute;bottom:50px;left:50%;transform:translateX(-50%);display:flex;gap:14px;z-index:10}
+.d-btn{width:64px;height:64px;border-radius:50%;border:2px solid #00d4ff;background:rgba(0,212,255,.05);display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;transition:all .3s}
+.d-btn:hover{background:rgba(0,212,255,.2);box-shadow:0 0 30px rgba(0,212,255,.3)}
+
+/* ─── 3) CONTROL CENTER - POST LOGIN VIEW ─── */
+#view-controlcenter{flex-direction:column;background:#0a0a0a;position:relative}
+.cc-header{padding:16px 24px;border-bottom:1px solid #1a1a2e;display:flex;align-items:center;justify-content:space-between;background:#0d0d14}
+.cc-header h2{font-size:16px;color:#00d4ff;font-weight:600;letter-spacing:1px;display:flex;align-items:center;gap:10px}
+.cc-header h2::before{content:'&#9889;';font-size:18px}
+.cc-user-info{display:flex;align-items:center;gap:12px;font-size:12px;color:#888}
+.cc-user-avatar{width:32px;height:32px;border-radius:50%;background:#1e1e2e;display:flex;align-items:center;justify-content:center;font-size:14px;color:#00d4ff}
+.cc-user-name{font-weight:500;color:#e0e0e0}
+.cc-user-role{font-size:10px;background:#1e1e2e;padding:2px 8px;border-radius:12px;color:#00d4ff}
+.cc-user-timer{font-size:11px;color:#ffaa00;background:#2a2a1a;padding:2px 8px;border-radius:12px;display:none}
+
+/* Main content: ORBS visualization */
+.cc-main{flex:1;position:relative;overflow:hidden}
+#orbs-canvas{width:100%;height:100%;display:block}
+.cc-status-overlay{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;z-index:10;pointer-events:none}
+.cc-state-badge{background:rgba(10,10,15,.9);border:1px solid #1a1a2e;border-radius:20px;padding:8px 20px;font-size:12px;font-weight:500;color:#00d4ff;display:flex;align-items:center;gap:8px;box-shadow:0 4px 24px rgba(0,0,0,.4)}
+.cc-state-badge.listening{border-color:#00d4ff;color:#00d4ff;box-shadow:0 0 16px rgba(0,212,255,.3)}
+.cc-state-badge.thinking{border-color:#ffaa00;color:#ffaa00;box-shadow:0 0 16px rgba(255,170,0,.3)}
+.cc-state-badge.speaking{border-color:#00ff88;color:#00ff88;box-shadow:0 0 16px rgba(0,255,136,.3)}
+.cc-state-badge.executing{border-color:#ff6666;color:#ff6666;box-shadow:0 0 16px rgba(255,102,102,.3)}
+.cc-state-dot{width:8px;height:8px;border-radius:50%;background:#00d4ff}
+.cc-state-badge.listening .cc-state-dot{background:#00d4ff;animation:pulse 1.5s infinite}
+.cc-state-badge.thinking .cc-state-dot{background:#ffaa00;animation:pulse 1s infinite}
+.cc-state-badge.speaking .cc-state-dot{background:#00ff88;animation:pulse .8s infinite}
+.cc-state-badge.executing .cc-state-dot{background:#ff6666;animation:pulse .6s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.2)}}
+.cc-state-text{font-weight:500;letter-spacing:.5px}
+
+/* ─── MODALS (Sidebar drawers) ─── */
+.modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);z-index:200;display:none;align-items:flex-end;justify-content:flex-end}
+.modal-overlay.open{display:flex}
+.modal-drawer{background:#0d0d14;border-left:1px solid #1a1a2e;width:100%;max-width:420px;height:100%;display:flex;flex-direction:column;animation:slideIn .3s ease}
+@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}
+.modal-header{padding:16px 20px;border-bottom:1px solid #1a1a2e;display:flex;align-items:center;justify-content:space-between;background:#0d0d14}
+.modal-header h3{font-size:14px;color:#00d4ff;font-weight:600;display:flex;align-items:center;gap:8px}
+.modal-close{background:none;border:none;color:#555;font-size:20px;cursor:pointer;padding:4px;line-height:1}
+.modal-close:hover{color:#00d4ff}
+.modal-body{flex:1;overflow-y:auto;padding:16px}
+.modal-footer{padding:12px 20px;border-top:1px solid #1a1a2e;background:#0d0d14;display:flex;gap:8px;justify-content:flex-end}
+
+/* ─── FILES MODAL ─── */
+.files-toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.files-toolbar .btn{flex:1;max-width:140px}
+.files-breadcrumb{display:flex;gap:4px;margin-bottom:12px;font-size:11px;color:#666;flex-wrap:wrap}
+.files-breadcrumb span{cursor:pointer;color:#888}
+.files-breadcrumb span:hover{color:#00d4ff}
+.files-breadcrumb span:last-child{color:#ccc;cursor:default}
+.files-list{list-style:none;font-size:12px}
+.files-list li{padding:10px 12px;border-bottom:1px solid #14141a;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:#d0d0d0;transition:background .1s}
+.files-list li:hover{background:#16161e}
+.files-list li.dir .name{color:#00d4ff}
+.files-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:#444;text-align:center;padding:20px}
+.files-empty svg{width:48px;height:48px;margin-bottom:12px;opacity:.5}
+.files-empty p{font-size:13px;margin-bottom:4px}
+.files-empty small{font-size:11px;color:#666}
+
+/* ─── USERS MODAL ─── */
+.users-toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.users-toolbar .field{display:flex;gap:6px;flex:1;min-width:200px}
+.users-toolbar input{flex:1;background:#12121a;border:1px solid #1e1e2e;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:12px}
+.users-toolbar input:focus{outline:none;border-color:#00d4ff}
+.users-toolbar select{background:#12121a;border:1px solid #1e1e2e;color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:12px}
+.users-toolbar .btn{white-space:nowrap}
+.users-table{width:100%;border-collapse:collapse;font-size:12px}
+.users-table th,.users-table td{padding:10px 12px;text-align:left;border-bottom:1px solid #14141a}
+.users-table th{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;position:sticky;top:0;background:#0d0d14}
+.users-table td{color:#d0d0d0}
+.users-table .status{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px}
+.users-table .status.on{background:#00ff88}
+.users-table .status.off{background:#ff4444}
+.users-table .status.away{background:#ffaa00}
+.users-table .status.expired{background:#ff4444}
+.users-table .role-badge{background:#1e1e2e;padding:2px 8px;border-radius:12px;font-size:10px;color:#00d4ff}
+.users-table .timer-badge{font-size:10px;color:#ffaa00;background:#2a2a1a;padding:2px 6px;border-radius:4px;font-family:monospace}
+.users-table .timer-badge.expired{color:#ff4444;background:#2a1a1a}
+.users-table .actions{display:flex;gap:4px}
+.users-table .btn.sm{padding:4px 8px;font-size:10px}
+.users-empty{display:flex;align-items:center;justify-content:center;height:200px;color:#444;font-size:13px}
+
+/* ─── AUTH OVERLAY ─── */
+#auth-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;z-index:1000}
+.auth-box{text-align:center;background:#0d0d14;border:1px solid #1a1a2e;border-radius:12px;padding:32px 40px;max-width:360px;width:90%}
+.auth-box h2{color:#00d4ff;font-size:22px;font-weight:600;letter-spacing:3px;margin-bottom:6px}
+.auth-box .subtitle{color:#555;font-size:13px;margin-bottom:20px}
+.auth-box .field{margin-bottom:14px;text-align:left}
+.auth-box label{display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.auth-box input{width:100%;background:#12121a;border:1px solid #1e1e2e;color:#e0e0e0;padding:12px 14px;border-radius:6px;font-size:13px;text-align:center}
+.auth-box input:focus{outline:none;border-color:#00d4ff}
+.auth-box .btn{width:100%;padding:12px;font-size:13px;font-weight:600;margin-top:8px}
+.auth-error{color:#ff4444;font-size:11px;margin-top:10px;min-height:16px}
+
+/* ─── COMMON ─── */
+.btn{background:#0f3460;border:1px solid #1a5276;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
+.btn:hover{background:#1a5276}
+.btn.sm{padding:4px 10px;font-size:11px}
+.btn.danger{background:#5c1a1a;border-color:#7a2e2e}
+.btn.danger:hover{background:#7a2e2e}
+.btn.ghost{background:transparent;border:1px solid #1e1e2e;color:#888}
+.btn.ghost:hover{border-color:#00d4ff;color:#00d4ff}
+.hidden{display:none!important}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#1e1e2e;border-radius:3px}
+"""
+
+# ─── HTML ────────────────────────────────────────────────────────────
+HTML = r"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A.R.I.S. Control Center</title>
+<style>""" + CSS + r"""</style>
+</head>
+<body>
+<canvas id="neural-bg"></canvas>
+<div class="layout">
+<div class="sidebar" id="sidebar">
+  <div class="logo" id="sl">A.R.I.S.</div>
+  <div class="sub" id="ss">Control Center</div>
+  <div class="sb-toggle" onclick="toggleSB()" title="Toggle sidebar" aria-label="Toggle sidebar">&#9776;</div>
+  <div class="sb-nav" id="sbn">
+    <div class="nav-item active" data-view="controlcenter" onclick="switchView('controlcenter')"><span class="ico">&#9632;</span><span class="lbl">Control Center</span></div>
+    <div class="nav-item" data-view="voice" onclick="switchView('voice')"><span class="ico">&#127908;</span><span class="lbl">Voice Interface</span></div>
+    <div class="nav-item" data-view="neural" onclick="switchView('neural')"><span class="ico">&#9672;</span><span class="lbl">Neural Network</span></div>
+  </div>
+  <div class="sb-footer" id="sf">TCP :8765 | HTTP :8766</div>
+</div>
+<div class="main" id="main">
+
+<!-- 1) VOICE INTERFACE (fullscreen) -->
+<div class="view" id="view-voice">
+  <div class="v-title">A.R.I.S. Voice Interface</div>
+  <div class="v-listening">A.R.I.S. is listening...</div>
+  <div class="v-mic pulse" id="v-mic" onclick="switchView('controlcenter')" aria-label="Open Control Center">&#127908;</div>
+</div>
+
+<!-- 2) NEURAL NETWORK (fullscreen) -->
+<div class="view" id="view-neural">
+  <div class="d-ham" onclick="toggleSB()" aria-label="Toggle sidebar">&#9776;</div>
+  <div class="d-btns">
+    <div class="d-btn" onclick="switchView('voice')" aria-label="Voice Interface">&#127908;</div>
+    <div class="d-btn" onclick="switchView('controlcenter')" aria-label="Control Center">&#128172;</div>
+  </div>
+</div>
+
+<!-- 3) CONTROL CENTER - POST LOGIN (orbs + status) -->
+<div class="view active" id="view-controlcenter">
+  <div class="cc-header">
+    <h2 data-icon="&#9889;">A.R.I.S. Control Center</h2>
+    <div class="cc-user-info">
+      <div class="cc-user-avatar" id="cc-avatar">&#128100;</div>
+      <div>
+        <div class="cc-user-name" id="cc-uname">Não logado</div>
+        <div class="cc-user-role" id="cc-urole">Convidado</div>
+      </div>
+      <div class="cc-user-timer" id="cc-timer" style="display:none">Expira em: --</div>
+    </div>
+  </div>
+  <div class="cc-main" id="cc-main">
+    <canvas id="orbs-canvas"></canvas>
+    <div class="cc-status-overlay">
+      <div class="cc-state-badge" id="cc-state-badge">
+        <span class="cc-state-dot"></span>
+        <span class="cc-state-text" id="cc-state-text">Aguardando login</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<!-- FILES MODAL -->
+<div class="modal-overlay" id="modal-files">
+  <div class="modal-drawer">
+    <div class="modal-header">
+      <h3 data-icon="&#128193;">Arquivos</h3>
+      <button class="modal-close" onclick="closeModal('files')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="files-toolbar">
+        <button class="btn sm" onclick="fcFiles('.')">&#127968; Raiz</button>
+        <button class="btn sm" onclick="fcFiles(fcPath)">&#128260; Atualizar</button>
+      </div>
+      <div class="files-breadcrumb" id="fc-bc"></div>
+      <ul class="files-list" id="fc-fl"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- USERS MODAL -->
+<div class="modal-overlay" id="modal-users">
+  <div class="modal-drawer">
+    <div class="modal-header">
+      <h3 data-icon="&#128100;">Usuários</h3>
+      <button class="modal-close" onclick="closeModal('users')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="users-toolbar">
+        <div class="field" style="flex:1;min-width:200px;max-width:300px">
+          <input type="text" id="new-u" placeholder="Username" aria-label="Username"/>
+          <input type="password" id="new-p" placeholder="Senha" aria-label="Senha"/>
+          <select id="new-r" aria-label="Role">
+            <option value="operador">Operador</option>
+            <option value="power-user">Power User</option>
+            <option value="admin">Admin</option>
+            <option value="temporario">Temporário (limitado)</option>
+          </select>
+          <input type="datetime-local" id="new-exp-start" style="display:none" aria-label="Início do acesso"/>
+          <input type="datetime-local" id="new-exp-end" style="display:none" aria-label="Fim do acesso"/>
+          <button class="btn sm" onclick="addUser()">Criar</button>
+        </div>
+      </div>
+      <div id="uc-ul" class="users-empty">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- AUTH OVERLAY -->
+<div id="auth-overlay"><div class="auth-box">
+  <h2>A.R.I.S.</h2>
+  <p class="subtitle">Control Center</p>
+  <div class="field"><label>Usuario</label><input type="text" id="au-user" placeholder="Usuario" autocomplete="username" onkeypress="if(event.key==='Enter')document.getElementById('au-pass').focus()"/></div>
+  <div class="field"><label>Senha</label><input type="password" id="au-pass" placeholder="Senha" autocomplete="current-password" onkeypress="if(event.key==='Enter')auth()"/></div>
+  <div class="auth-error" id="au-err"></div>
+  <button class="btn" onclick="auth()">Entrar</button>
+</div></div>
+
+<script>
+// ─── NEURAL BG ───
+const ncv=document.getElementById('neural-bg'), nctx=ncv.getContext('2d');
+let orbs=[], OC=120, CD=150;
+function rsz(){ncv.width=innerWidth;ncv.height=innerHeight} rsz(); addEventListener('resize',rsz);
+function mk(){return{x:Math.random()*ncv.width,y:Math.random()*ncv.height,vx:(Math.random()-.5)*.35,vy:(Math.random()-.5)*.35,r:Math.random()*2+1,p:Math.random()*Math.PI*2,c:Math.random()>.7?'00ff88':'00d4ff'}}
+for(let i=0;i<OC;i++)orbs.push(mk());
+function anm(){nctx.clearRect(0,0,ncv.width,ncv.height);
+ orbs.forEach(o=>{o.x+=o.vx;o.y+=o.vy;o.p+=.02;if(o.x<0||o.x>ncv.width)o.vx*=-1;if(o.y<0||o.y>ncv.height)o.vy*=-1});
+ for(let i=0;i<orbs.length;i++)for(let j=i+1;j<orbs.length;j++){let dx=orbs[i].x-orbs[j].x,dy=orbs[i].y-orbs[j].y,d=Math.hypot(dx,dy);if(d<CD){let a=(1-d/CD)*.12;nctx.beginPath();nctx.moveTo(orbs[i].x,orbs[i].y);nctx.lineTo(orbs[j].x,orbs[j].y);nctx.strokeStyle='rgba(0,212,255,'+a+')';nctx.lineWidth=.5;nctx.stroke()}}
+ orbs.forEach(o=>{let g=.3+Math.sin(o.p)*.2;nctx.beginPath();nctx.arc(o.x,o.y,Math.max(.5,o.r),0,Math.PI*2);nctx.fillStyle='rgba(0,'+o.c+','+(.4+g*.3).toFixed(2)+')';nctx.fill();if(o.r>1.5){nctx.beginPath();nctx.arc(o.x,o.y,o.r*3,0,Math.PI*2);nctx.fillStyle='rgba(0,'+o.c+',.04)';nctx.fill()}});
+ requestAnimationFrame(anm)} anm();
+
+// ─── ORBS CANVAS (Control Center main) ───
+const ocv=document.getElementById('orbs-canvas'), octx=ocv.getContext('2d');
+let oorbs=[], OOC=80, OCD=180;
+function orsz(){ocv.width=ocv.clientWidth;ocv.height=ocv.clientHeight} orsz(); addEventListener('resize',orsz);
+function omk(){return{x:Math.random()*ocv.width,y:Math.random()*ocv.height,vx:(Math.random()-.5)*.4,vy:(Math.random()-.5)*.4,r:Math.random()*3+2,p:Math.random()*Math.PI*2,c:Math.random()>.6?'00d4ff':Math.random()>.3?'00ff88':'ffaa00',type:Math.random()>.7?'core':Math.random()>.4?'module':'peripheral'}}
+for(let i=0;i<OOC;i++)oorbs.push(omk());
+function oanm(){octx.clearRect(0,0,ocv.width,ocv.height);
+ oorbs.forEach(o=>{o.x+=o.vx;o.y+=o.vy;o.p+=.015;if(o.x<0||o.x>ocv.width)o.vx*=-1;if(o.y<0||o.y>ocv.height)o.vy*=-1});
+ // Connections based on type proximity
+ for(let i=0;i<oorbs.length;i++)for(let j=i+1;j<oorbs.length;j++){let dx=oorbs[i].x-oorbs[j].x,dy=oorbs[i].y-oorbs[j].y,d=Math.hypot(dx,dy);if(d<OCD){let a=(1-d/OCD)*.08;octx.beginPath();octx.moveTo(oorbs[i].x,oorbs[i].y);octx.lineTo(oorbs[j].x,oorbs[j].y);octx.strokeStyle='rgba(0,212,255,'+a+')';octx.lineWidth=.5;octx.stroke()}}
+ oorbs.forEach(o=>{let g=.3+Math.sin(o.p)*.25;octx.beginPath();octx.arc(o.x,o.y,Math.max(1,o.r),0,Math.PI*2);let col=o.type==='core'?'00d4ff':o.type==='module'?'00ff88':'ffaa00';octx.fillStyle='rgba(0,'+col+','+(.5+g*.3).toFixed(2)+')';octx.fill();octx.beginPath();octx.arc(o.x,o.y,o.r*2.5,0,Math.PI*2);octx.fillStyle='rgba(0,'+col+',.06)';octx.fill()});
+ requestAnimationFrame(oanm)} oanm();
+
+// ─── STATE ───
+let TOKEN='', API=location.origin, CURRENT_USER=null;
+
+// ─── VIEWS ───
+function toggleSB(){document.getElementById('sidebar').classList.toggle('exp')}
+function switchView(v){
+  document.querySelectorAll('.nav-item').forEach(e=>e.classList.toggle('active',e.dataset.view===v));
+  document.querySelectorAll('.view').forEach(e=>e.style.display='none');
+  const t=document.getElementById('view-'+v); if(t) t.style.display='flex';
+}
+
+// ─── MODALS ───
+function openModal(id){document.getElementById('modal-'+id).classList.add('open'); if(id==='files')fcFiles('.'); if(id==='users')loadUsers()}
+function closeModal(id){document.getElementById('modal-'+id).classList.remove('open')}
+
+// ─── AUTH ───
+async function auth(){
+  const u=document.getElementById('au-user'), p=document.getElementById('au-pass'), e=document.getElementById('au-err');
+  const un=u.value.trim(), pw=p.value;
+  if(!un||!pw){e.textContent='Preencha usuario e senha';return}
+  try{
+    const r=await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:un,password:pw})});
+    const d=await r.json();
+    if(!d.ok){e.textContent=d.error||'Erro';return}
+    TOKEN=d.session; document.getElementById('auth-overlay').classList.add('hidden'); onLogin(d);
+  }catch(e){e.textContent='Erro: '+e.message}
+}
+
+async function ccAuth(){
+  const u=document.getElementById('cc-user'), p=document.getElementById('cc-pass'), e=document.getElementById('cc-err'), b=u.parentElement.querySelector('.btn');
+  const un=u.value.trim(), pw=p.value;
+  if(!un||!pw){e.textContent='Preencha usuario e senha';return}
+  b.textContent='Conectando...'; b.disabled=true;
+  try{
+    const r=await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:un,password:pw})});
+    const d=await r.json();
+    if(!d.ok){e.textContent=d.error||'Erro';b.textContent='Entrar';b.disabled=false;return}
+    TOKEN=d.session; document.getElementById('auth-overlay').classList.add('hidden'); onLogin(d);
+  }catch(e){e.textContent='Erro: '+e.message;b.textContent='Entrar';b.disabled=false}
+}
+
+function onLogin(d){
+  CURRENT_USER=d.user;
+  updateUserUI(d.user);
+  refreshStatus();
+  setInterval(refreshStatus,15000);
+  if(d.user.role==='temporario') startTimer(d.user.expires_at);
+}
+
+function updateUserUI(u){
+  document.getElementById('cc-uname').textContent=u.username;
+  document.getElementById('cc-urole').textContent=u.role;
+  document.getElementById('cc-avatar').textContent=u.role==='admin'?'&#128100;':'&#128100;';
+  if(u.role==='temporario' && u.expires_at){
+    document.getElementById('cc-timer').style.display='block';
+  }
+}
+
+function startTimer(expiresAt){
+  const timer=document.getElementById('cc-timer');
+  const update=()=>{const left=expiresAt*1000-Date.now(); if(left<=0){timer.textContent='Expirado!';timer.style.color='#ff4444';setTimeout(()=>location.reload(),2000);return} const d=Math.floor(left/86400000),h=Math.floor((left%86400000)/3600000),m=Math.floor((left%3600000)/60000); timer.textContent='Expira em: '+(d?d+'d ':'')+(h?h+'h ':'')+m+'m'; timer.style.color='#ffaa00'}; update(); setInterval(update,30000);
+}
+
+// ─── STATUS ───
+async function refreshStatus(){
+  try{const d=await api('/api/status'); const v=d.ok?'ON':'OFF'; document.getElementById('s-gw').textContent=v; document.getElementById('s-gw').className='value '+(d.ok?'ok':'err');}catch(e){document.getElementById('s-gw').textContent='OFF';document.getElementById('s-gw').className='value err'}
+  try{const m=await api('/api/metrics'); const mm=m.metrics||{};
+    const pc=mm.pc_online?'ON':'OFF'; document.getElementById('s-pc').textContent=pc; document.getElementById('s-pc').className='value '+(mm.pc_online?'ok':'err');
+    const mode=mm.mode||'unknown'; document.getElementById('s-mode').textContent=mode; document.getElementById('s-mode').className='value '+(mode==='primary'?'ok':mode==='edge'?'warn':'');
+    document.getElementById('s-up').textContent=mm.uptime?fmtUptime(mm.uptime):'--';
+    document.getElementById('s-req').textContent=mm.requests||0;
+    document.getElementById('s-ram').textContent=mm.memory_mb?mm.memory_mb+' MB':'--';
+    const h=mm.system_health||0; document.getElementById('s-hl').textContent=h?h+'%':'--'; document.getElementById('s-hl').className='value '+(h>=80?'ok':h>=50?'warn':'err');
+    const hb=document.getElementById('s-hlb'); if(hb){hb.style.width=h+'%';hb.style.background=h>=80?'#00ff88':h>=50?'#00d4ff':'#ffaa00'}
+    document.getElementById('s-tmp').textContent=mm.temperature?mm.temperature+'°C':'--';
+    // Update orb state badge
+    updateOrbState(mm);
+  }catch(e){}
+}
+function fmtUptime(s){const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+(m?m+'m ':'')+Math.floor(s%60)+'s'}
+
+function updateOrbState(mm){
+  const badge=document.getElementById('cc-state-badge'), text=document.getElementById('cc-state-text');
+  if(!mm.pc_online){badge.className='cc-state-badge';text.textContent='PC offline';return}
+  if(mm.mode==='primary'){badge.className='cc-state-badge executing';text.textContent='Executando (PRIMARY)'}
+  else if(mm.mode==='edge'){badge.className='cc-state-badge thinking';text.textContent='Modo EDGE'}
+  else{badge.className='cc-state-badge listening';text.textContent='Aguardando comando'}
+}
+
+// ─── API HELPER ───
+async function api(p,o={}){
+  o=o||{};const h=Object.assign({'Authorization':'Bearer '+TOKEN},o.headers||{});
+  if(o.body&&!o.noJson)h['Content-Type']='application/json';
+  const r=await fetch(API+p,Object.assign({},o,{headers:h}));
+  const d=await r.json();if(!r.ok)throw new Error(d.error||'HTTP '+r.status);return d
+}
+
+// ─── FILES MODAL ───
+let fcPath='.';
+async function fcFiles(p){p=p||fcPath;fcPath=p;
+  try{const d=await api('/api/files?path='+encodeURIComponent(p));document.getElementById('fc-bc').textContent=p;
+    const l=document.getElementById('fc-fl');l.innerHTML='';
+    if(p!=='.'){const li=document.createElement('li');li.className='dir';li.innerHTML='<span class="name">.. / Voltar</span>';li.onclick=()=>fcFiles(p.split('/').slice(0,-1).join('/')||'.');l.appendChild(li)}
+    if(!d.files||d.files.length===0){
+      const li=document.createElement('li');li.className='files-empty';li.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12"/></svg><p>Nenhum arquivo</p><small>Esta pasta est&#225; vazia</small>';l.appendChild(li);
+    }else{
+      if(p!=='.'){const li=document.createElement('li');li.className='dir';li.innerHTML='<span class="name">.. / Voltar</span>';li.onclick=()=>fcFiles(p.split('/').slice(0,-1).join('/')||'.');l.appendChild(li)}
+      (d.files||[]).forEach(f=>{const li=document.createElement('li');if(f.is_dir)li.className='dir';const ic=f.is_dir?'/ ':'  ';li.innerHTML='<span class="name">'+ic+escapeHtml(f.name)+'</span><span class="size">'+(f.is_dir?'':fmtSize(f.size))+'</span>';li.onclick=f.is_dir?()=>fcFiles(f.path):()=>{};l.appendChild(li)})}}catch(e){}
+}
+function fmtSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
+function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+
+// ─── USERS MODAL ───
+async function addUser(){
+  const u=document.getElementById('new-u'), p=document.getElementById('new-p'), r=document.getElementById('new-r');
+  const un=u.value.trim(), pw=p.value, ro=r.value;
+  if(!un||!pw){alert('Preencha usuário e senha');return}
+  let body={action:'create',username:un,password:pw,role:ro};
+  if(ro==='temporario'){
+    const start=document.getElementById('new-exp-start').value;
+    const end=document.getElementById('new-exp-end').value;
+    if(!start||!end){alert('Usuário temporário requer data/hora de início e fim');return}
+    body.expires_start=start; body.expires_end=end;
+  }
+  try{const d=await api('/api/users',{method:'POST',body:JSON.stringify(body)});if(d.ok){document.getElementById('new-u').value='';document.getElementById('new-p').value='';loadUsers()}else{alert('Erro: '+(d.error||'?'))}}catch(e){alert('Erro: '+e.message)}
+}
+function toggleExpFields(){
+  const r=document.getElementById('new-r').value;
+  document.getElementById('new-exp-start').style.display=r==='temporario'?'block':'none';
+  document.getElementById('new-exp-end').style.display=r==='temporario'?'block':'none';
+}
+async function loadUsers(){
+  try{const d=await api('/api/users');const l=document.getElementById('uc-ul');if(d.ok&&d.users&&d.users.length>0){let h='<table class="users-table"><thead><tr><th>Status</th><th>Usuário</th><th>Role</th><th>Criado</th><th>Expira</th><th>Ações</th></tr></thead><tbody>';(d.users||[]).forEach(u=>{const cr=u.created?new Date(u.created*1000).toLocaleString('pt-BR'):'--'; let exp='-', timer=''; if(u.expires_at){const expDate=new Date(u.expires_at*1000); exp=expDate.toLocaleString('pt-BR'); const left=u.expires_at*1000-Date.now(); if(left>0){const d=Math.floor(left/86400000),h=Math.floor((left%86400000)/3600000),m=Math.floor((left%3600000)/60000); timer='<span class="timer-badge">'+(d?d+'d ':'')+(h?h+'h ':'')+m+'m</span>';}else{timer='<span class="timer-badge expired">Expirado</span>'}} h+='<tr><td><span class="status '+(u.online?'on':u.away?'away':u.expired?'expired':'off')+'"></span>'+escapeHtml(u.username)+'</td><td><span class="role-badge">'+escapeHtml(u.role)+'</span></td><td>'+cr+'</td><td>'+exp+'</td><td>'+timer+'</td><td class="actions"><button class="btn sm danger" onclick="deleteUser(\''+u.username+'\')">Excluir</button></td></tr>';});h+='</tbody></table>';l.innerHTML=h}else{l.innerHTML='<div class="users-empty">Nenhum usuário cadastrado</div>'}}catch(e){document.getElementById('uc-ul').innerHTML='<div class="users-empty">Erro ao carregar</div>'}
+}
+async function deleteUser(un){
+  if(!confirm('Excluir usuário '+un+'?'))return;
+  try{const d=await api('/api/users',{method:'POST',body:JSON.stringify({action:'delete',username:un})});if(d.ok)loadUsers();else alert('Erro: '+(d.error||'?'))}catch(e){alert('Erro: '+e.message)}
+}
+
+// ─── FILES ───
+let fcPath='.';
+async function fcFiles(p){p=p||fcPath;fcPath=p;
+  try{const d=await api('/api/files?path='+encodeURIComponent(p));document.getElementById('fc-bc').textContent=p;
+    const l=document.getElementById('fc-fl');l.innerHTML='';
+    if(p!=='.'){const li=document.createElement('li');li.className='dir';li.innerHTML='<span class="name">.. / Voltar</span>';li.onclick=()=>fcFiles(p.split('/').slice(0,-1).join('/')||'.');l.appendChild(li)}
+    if(!d.files||d.files.length===0){
+      const li=document.createElement('li');li.className='files-empty';li.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12"/></svg><p>Nenhum arquivo</p><small>Esta pasta est&#225; vazia</small>';l.appendChild(li);
+    }else{
+      if(p!=='.'){const li=document.createElement('li');li.className='dir';li.innerHTML='<span class="name">.. / Voltar</span>';li.onclick=()=>fcFiles(p.split('/').slice(0,-1).join('/')||'.');l.appendChild(li)}
+      (d.files||[]).forEach(f=>{const li=document.createElement('li');if(f.is_dir)li.className='dir';const ic=f.is_dir?'/ ':'  ';li.innerHTML='<span class="name">'+ic+escapeHtml(f.name)+'</span><span class="size">'+(f.is_dir?'':fmtSize(f.size))+'</span>';li.onclick=f.is_dir?()=>fcFiles(f.path):()=>{};l.appendChild(li)})}}catch(e){}
+}
+function fmtSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';return(b/1048576).toFixed(1)+' MB'}
+function escapeHtml(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+
+// ─── INIT ───
+document.getElementById('au-user').focus();
+document.getElementById('new-r').addEventListener('change',toggleExpFields);
+</script>
+</body>
+</html>"""
+
+with open(OUT, "w", encoding="utf-8") as f:
+    f.write(HTML)
+print(f"Dashboard v2 escrito: {len(HTML)} bytes")
+print("OK - Novo layout: pós-login = orbes + status, sidebar com modais Files/Users")

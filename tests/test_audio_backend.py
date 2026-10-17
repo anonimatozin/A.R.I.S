@@ -15,6 +15,7 @@ PyAudio está quebrado (sem módulo C) e não há libportaudio:
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import struct
 import subprocess
@@ -374,3 +375,76 @@ def test_wake_word_fuzzy_rejects_unrelated_speech():
     assert sensor._match_wake_word("claridade total") is False
     assert sensor._match_wake_word("bom dia pessoal") is False
     assert sensor._match_wake_word("") is False
+
+
+def test_stage2_delivers_fuzzy_homophone(monkeypatch):
+    """Regressão Bug A: a ETAPA 2 (_on_transcript_result) que ENTREGA o
+    comando precisa usar o MESMO match fuzzy da etapa 1.
+
+    Bug real: a etapa 1 passava (fuzzy) mas a etapa 2 ainda era match
+    exato — quando o whisper ouvia "Ares" (não "Aris") o comando era
+    descartado em silêncio na entrega ("às vezes ela não responde").
+    """
+    sensor = _make_sensor()
+    sensor._last_wake_time = 0.0  # fora do cooldown
+    delivered: list[str] = []
+    monkeypatch.setattr(
+        sensor, "_send_message",
+        lambda text, origin=None: delivered.append(text),
+    )
+
+    # Caso real medido: whisper ouve "Ares" — ANTES rejeitado aqui
+    assert sensor._on_transcript_result("Ares, tudo bem com você?") is True
+    assert delivered == ["Ares, tudo bem com você?"]
+
+    # Nome correto também entrega (cooldown resetado = falas separadas)
+    delivered.clear()
+    sensor._last_wake_time = 0.0
+    assert sensor._on_transcript_result("Aris, que horas são?") is True
+    assert delivered == ["Aris, que horas são?"]
+
+    # Sem wake word → não entrega (cooldown de T2 permanece ativo)
+    delivered.clear()
+    assert sensor._on_transcript_result("bares do centro") is False
+    assert delivered == []
+
+    # Cooldown ativo (1s) bloquea re-trigger imediato — regressão preservada
+    delivered.clear()
+    assert sensor._on_transcript_result("Aris, tudo bem?") is False
+    assert delivered == []
+
+
+# ── 10. Instância única (duas cópias brigam pelo microfone) ───
+
+def test_single_instance_lock_is_exclusive(monkeypatch, tmp_path):
+    """Duas instâncias simultâneas = dois ``arecord`` disputando o
+    dispositivo ALSA ``default`` (exclusivo para captura) → uma delas
+    fica surda e "às vezes não responde" (bug medido às 13:26).
+
+    A trava por flock deve ser mutuamente exclusiva até entre dois
+    descritores do MESMO processo (open()s independentes).
+    """
+    import aris_local
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    aris_local._release_instance_lock()  # estado limpo
+
+    assert aris_local._acquire_instance_lock() is None       # 1ª ganha
+    holder = aris_local._acquire_instance_lock()             # 2ª perde
+    assert holder == os.getpid()  # PID gravado dentro do lock file
+
+    aris_local._release_instance_lock()
+    assert aris_local._acquire_instance_lock() is None       # liberou
+    aris_local._release_instance_lock()
+
+
+def test_find_other_instance_smoke():
+    """Varredura de /proc não pode quebrar e devolve None ou PID válido.
+
+    Nenhuma instância real do aris_local roda dentro da suíte, então o
+    caso comum é None — mas aceita int se uma instância existir fora.
+    """
+    import aris_local
+
+    result = aris_local._find_other_instance()
+    assert result is None or (isinstance(result, int) and result > 0)

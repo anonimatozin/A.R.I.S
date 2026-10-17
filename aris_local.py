@@ -14,6 +14,7 @@ Uso:
 """
 
 import argparse
+import fcntl
 import os
 import sys
 from pathlib import Path
@@ -42,6 +43,86 @@ os.environ.setdefault("ARIS_VOICE_VOLUME", "100")
 
 from core.aris import Aris
 from utils.logger import Logger
+
+# fd do lock mantido vivo durante todo o processo (fecha = libera a trava)
+_LOCK_FD: int | None = None
+
+
+def _find_other_instance() -> int | None:
+    """PID de OUTRA instância do aris_local.py em execução, se houver.
+
+    Varre /proc para achar instâncias anteriores (lançadas antes de
+    existir o lock de arquivo) — só processos Python com argv contendo
+    um argumento exato 'aris_local.py' (wrappers bash/timeout só casam
+    se também tiverem um argv python separado, que não têm).
+    """
+    my_pid = os.getpid()
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit() or int(entry.name) == my_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        args = [a for a in raw.decode("utf-8", "replace").split("\0") if a]
+        if not args:
+            continue
+        if not any(os.path.basename(a).startswith("python") for a in args):
+            continue
+        if any(Path(a).name == "aris_local.py" for a in args):
+            return int(entry.name)
+    return None
+
+
+def _acquire_instance_lock() -> int | None:
+    """Trava exclusiva por arquivo — impede duas instâncias simultâneas.
+
+    Bug real medido (13:26): DUAS instâncias rodando ao mesmo tempo, cada
+    uma com seu `arecord` disputando o dispositivo ALSA 'default' de
+    captura (exclusivo) → uma delas fica surda e "às vezes não responde".
+    O flock é liberado pelo kernel mesmo se o processo morrer com SIGKILL
+    (sem lock obsoleto).
+
+    Retorna None em sucesso; PID da instância que já segura a trava
+    quando outra já está no ar (ou -1 se o PID não puder ser lido).
+    """
+    global _LOCK_FD
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    lock_path = Path(runtime) / f"aris-local-{os.getuid()}.lock"
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # Outra instância segura a trava: o PID fica escrito no arquivo
+        holder = -1
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            holder = int(os.read(fd, 32).decode().strip() or -1)
+        except (OSError, ValueError):
+            holder = -1
+        os.close(fd)
+        return holder
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+    except OSError:
+        pass
+    _LOCK_FD = fd
+    return None
+
+
+def _release_instance_lock() -> None:
+    global _LOCK_FD
+    if _LOCK_FD is not None:
+        try:
+            os.close(_LOCK_FD)
+        except OSError:
+            pass
+        _LOCK_FD = None
 
 
 def main() -> None:
@@ -86,6 +167,29 @@ Exemplos:
     )
     args = parser.parse_args()
 
+    logger = Logger(name="aris_local", log_dir=ROOT_DIR / "logs", level="INFO")
+
+    # Instância única (microfone ALSA 'default' é exclusivo — duas
+    # instâncias brigam pela captura e uma fica surda). --text-only não
+    # usa microfone, então não trava. ARIS_ALLOW_MULTI_INSTANCE=1 pula
+    # o bloqueio (uso próprio/diagnóstico).
+    if not args.text_only and os.environ.get("ARIS_ALLOW_MULTI_INSTANCE") != "1":
+        other = _find_other_instance()
+        if other is None:
+            other = _acquire_instance_lock()
+        if other is not None:
+            _release_instance_lock()  # no-op se a trava não foi ganha
+            pid_txt = str(other) if other > 0 else "desconhecido"
+            print(
+                f"A.R.I.S. ja esta em execucao (PID {pid_txt}).\n"
+                "Duas instancias disputam o microfone e as respostas ficam\n"
+                "intermitentes. Feche a outra janela antes de abrir uma nova."
+            )
+            logger.warning(
+                f"Bloqueio de instância única: outra instância (PID {pid_txt}) já está no ar"
+            )
+            sys.exit(1)
+
     # Configura variáveis de ambiente baseadas nos argumentos
     if args.text_only:
         os.environ["ARIS_CONTINUOUS_VOICE_ENABLED"] = "false"
@@ -99,7 +203,6 @@ Exemplos:
     os.environ["ARIS_VAD_AGGRESSIVENESS"] = str(args.vad_level)
     os.environ["ARIS_STT_MODEL"] = args.stt_model
 
-    logger = Logger(name="aris_local", log_dir=ROOT_DIR / "logs", level="INFO")
     logger.info("Iniciando A.R.I.S. Local CLI com voz real")
 
     try:

@@ -615,8 +615,12 @@ class ContinuousVoiceSensor:
         transcript_lower = transcript.lower().strip()
         self._logger.debug(f"Transcrição: '{transcript}'")
 
-        # Verificar wake word em QUALQUER posição
-        wake_detected = any(wake in transcript_lower for wake in self._wake_words)
+        # Verificar wake word em QUALQUER posição — MESMO match fuzzy da
+        # etapa 1 (_process_speech_buffer). Bug real: aqui ainda era o
+        # match exato, então quando o whisper ouvia "Ares" (não "Aris")
+        # a etapa 1 passava (fuzzy) mas esta etapa REJEITAVA e o comando
+        # era descartado em silêncio — "às vezes ela não responde".
+        wake_detected = self._match_wake_word(transcript_lower)
 
         now = time.time()
         if wake_detected:

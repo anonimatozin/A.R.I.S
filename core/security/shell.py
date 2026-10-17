@@ -12,6 +12,7 @@ Uso:
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -219,6 +220,10 @@ def safe_resolve(base_dir: Path, user_path: str) -> Path:
         PathTraversalError: Se o path escapar de base_dir.
     """
     base_resolved = base_dir.resolve()
+    # No Linux "..\\..\\Windows" seria um único nome de arquivo e passaria na checagem
+    # abaixo; tratamos "\\" como separador para o ataque não depender do sistema.
+    if os.name != "nt":
+        user_path = user_path.replace("\\", "/")
     user = Path(user_path)
 
     if user.is_absolute():

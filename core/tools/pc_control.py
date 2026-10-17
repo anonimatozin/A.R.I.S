@@ -8,13 +8,19 @@ NUNCA "lembrar" uma confirmacao anterior para pular a proxima.
 
 from __future__ import annotations
 
+import math
+import os
+import platform
+import shutil
 import subprocess
 import time
 from typing import Any
 
+_IS_WINDOWS = os.name == "nt"
+
 
 class PCControl:
-    """Controle remoto do PC Windows.
+    """Controle remoto do PC (Windows via PowerShell; Linux via systemd/loginctl).
 
     Todos os comandos passam por SecurityGate.
     shutdown/restart sempre exigem confirmacao.
@@ -54,8 +60,43 @@ class PCControl:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def _run_argv(self, argv: list[str], timeout: int = 15) -> dict[str, Any]:
+        """Executa um comando Linux (sem shell).
+
+        Mesma trava de segurança do ``_run_ps``: não executa nada de verdade
+        enquanto ``_real_execution`` for False.
+        """
+        if not getattr(self, "_real_execution", False):
+            return {"ok": False, "error": "real execution disabled (use _real_execution=True)"}
+        if shutil.which(argv[0]) is None:
+            return {"ok": False, "error": f"{argv[0]} não encontrado neste sistema"}
+        try:
+            start = time.time()
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+            duration = int((time.time() - start) * 1000)
+            return {
+                "ok": result.returncode == 0,
+                "stdout": result.stdout.strip()[:2000],
+                "stderr": result.stderr.strip()[:1000],
+                "duration_ms": duration,
+            }
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "timeout"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @staticmethod
+    def _delay_minutes(timeout_s: int) -> str:
+        """O ``shutdown`` do Linux só aceita atraso em minutos (``+N``) ou ``now``."""
+        return f"+{math.ceil(timeout_s / 60)}" if timeout_s > 0 else "now"
+
     def pc_status(self) -> dict[str, Any]:
         """Status do PC (SAFE - sem confirmacao)."""
+        if not _IS_WINDOWS:
+            return {
+                "ok": True,
+                "stdout": f"{platform.node()} | {platform.system()} {platform.release()} | {platform.machine()}",
+            }
         return self._run_ps(
             "Get-ComputerInfo | Select-Object CsName,WindowsVersion,"
             "OsArchitecture,PowerStatus | ConvertTo-Json"
@@ -78,13 +119,23 @@ class PCControl:
                 "message": "pc_shutdown is CRITICAL. Set _confirmed=true to proceed.",
             }
 
-        force = "/f" if params.get("force") else ""
+        force = bool(params.get("force"))
         timeout_s = int(params.get("timeout_s", 0))
-        cmd = f"Stop-Computer -Force{force}"
-        if timeout_s > 0:
-            cmd = f"shutdown /s /f /t {timeout_s}"
 
         self._last_action = "shutdown"
+        if not _IS_WINDOWS:
+            if timeout_s > 0:
+                argv = ["shutdown", "-h", self._delay_minutes(timeout_s)]
+            else:
+                argv = ["systemctl", "poweroff"] + (["--force"] if force else [])
+            result = self._run_argv(argv, timeout=10)
+            self._last_result = result
+            return result
+
+        # (antes: f"Stop-Computer -Force{'/f'}" gerava "-Force/f", inválido no PowerShell)
+        cmd = "Stop-Computer" + (" -Force" if force else "")
+        if timeout_s > 0:
+            cmd = f"shutdown /s {'/f ' if force else ''}/t {timeout_s}"
         result = self._run_ps(cmd, timeout=10)
         self._last_result = result
         return result
@@ -106,13 +157,22 @@ class PCControl:
                 "message": "pc_restart is CRITICAL. Set _confirmed=true to proceed.",
             }
 
-        force = "/f" if params.get("force") else ""
+        force = bool(params.get("force"))
         timeout_s = int(params.get("timeout_s", 0))
-        cmd = f"Restart-Computer -Force{force}"
-        if timeout_s > 0:
-            cmd = f"shutdown /r /f /t {timeout_s}"
 
         self._last_action = "restart"
+        if not _IS_WINDOWS:
+            if timeout_s > 0:
+                argv = ["shutdown", "-r", self._delay_minutes(timeout_s)]
+            else:
+                argv = ["systemctl", "reboot"] + (["--force"] if force else [])
+            result = self._run_argv(argv, timeout=10)
+            self._last_result = result
+            return result
+
+        cmd = "Restart-Computer" + (" -Force" if force else "")
+        if timeout_s > 0:
+            cmd = f"shutdown /r {'/f ' if force else ''}/t {timeout_s}"
         result = self._run_ps(cmd, timeout=10)
         self._last_result = result
         return result
@@ -129,6 +189,10 @@ class PCControl:
             }
 
         self._last_action = "lock"
+        if not _IS_WINDOWS:
+            result = self._run_argv(["loginctl", "lock-session"], timeout=10)
+            self._last_result = result
+            return result
         result = self._run_ps(
             "rundll32.exe user32.dll,LockWorkStation",
             timeout=10,
@@ -148,6 +212,10 @@ class PCControl:
             }
 
         self._last_action = "sleep"
+        if not _IS_WINDOWS:
+            result = self._run_argv(["systemctl", "suspend"], timeout=10)
+            self._last_result = result
+            return result
         result = self._run_ps(
             "Add-Type -Assembly System.Windows.Forms; "
             "[System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)",

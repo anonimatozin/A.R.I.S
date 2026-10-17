@@ -1824,8 +1824,9 @@ class Aris:
 
         # Sync engine (sempre disponivel, mesmo sem CLL1)
         try:
+            from core.memcore.paths import default_memory_root
             self._sync_engine = SyncEngine(
-                db_path=Path("D:/ARIS_MEMORY/database/aris_memory.db"),
+                db_path=default_memory_root() / "database" / "aris_memory.db",
                 logger=self._logger,
             )
             self._container.set("sync.engine", self._sync_engine)
@@ -1886,7 +1887,8 @@ class Aris:
                         self._logger.info(f"Personalidade sincronizada com {sent} cliente(s) CLL1")
 
                 # Também salvar localmente para painel web acessar
-                personality_path = Path("D:/ARIS_MEMORY/personality_sync.md")
+                from core.memcore.paths import default_memory_root
+                personality_path = default_memory_root() / "personality_sync.md"
                 personality_path.parent.mkdir(parents=True, exist_ok=True)
                 personality_path.write_text(ARIS_PERSONALITY, encoding="utf-8")
                 self._logger.info("Personalidade salva para painel web")

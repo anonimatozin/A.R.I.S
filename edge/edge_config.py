@@ -29,9 +29,12 @@ class EdgeConfig:
     cll1_host: str = "192.168.0.106"
     cll1_port: int = 8765
     cll1_token: str = ""
-    memory_dir: Path = field(default_factory=lambda: Path("~/cll1/data"))
+    # expanduser(): Path("~/x") NÃO expande o "~" sozinho — sem isto os testes (e
+    # qualquer EdgeConfig() com valores padrão) criavam uma pasta literal "~" no
+    # diretório atual.
+    memory_dir: Path = field(default_factory=lambda: Path("~/cll1/data").expanduser())
     personality_path: Path = field(
-        default_factory=lambda: Path("~/cll1/data/personality_sync.md")
+        default_factory=lambda: Path("~/cll1/data/personality_sync.md").expanduser()
     )
     sync_enabled: bool = True
 

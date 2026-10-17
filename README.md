@@ -55,8 +55,11 @@ Aris/
 ## Como Executar
 
 ```bash
-python main.py
+python main.py                 # qualquer sistema (opções: --text-only, --mic-off, --no-tts)
+./aris.sh                      # Linux: prepara PortAudio/X11 e usa venv-linux
 ```
+
+No Windows também funciona `aris.bat` (CLI do agente) e `run_aris.bat`.
 
 Para desenvolvimento:
 

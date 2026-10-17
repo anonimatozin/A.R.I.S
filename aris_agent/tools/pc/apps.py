@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -40,6 +42,38 @@ SPEC_OPEN_APP = ToolSpec(
     tags=("pc", "apps"),
     timeout_s=20.0,
 )
+
+
+def _open_target(target: str, *, executable: bool) -> str | None:
+    """Abre ``target`` no sistema atual. Devolve a mensagem de erro, ou None se deu certo.
+
+    Windows: ``os.startfile``. Linux/macOS: executa o arquivo se for um executável
+    cadastrado; caso contrário (URL, documento) delega ao ``xdg-open``/``open``.
+    Sempre sem shell e com o processo desacoplado da ARIS.
+    """
+    if hasattr(os, "startfile"):
+        os.startfile(target)  # type: ignore[attr-defined]
+        return None
+    if not (sys.platform.startswith("linux") or sys.platform == "darwin"):
+        return "abrir aplicativos não é suportado neste sistema"
+    if executable and Path(target).is_file() and os.access(target, os.X_OK):
+        argv = [target]
+    else:
+        opener = shutil.which("xdg-open" if sys.platform.startswith("linux") else "open")
+        if opener is None:
+            return "xdg-open não encontrado (instale o pacote xdg-utils)"
+        argv = [opener, target]
+    try:
+        subprocess.Popen(  # noqa: S603 - argv fixo, sem shell
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return f"falha ao abrir {target!r}: {exc}"
+    return None
 
 
 def _app_map(config_section: dict) -> dict[str, str]:
@@ -86,17 +120,20 @@ def pc_open_app(args: dict, ctx: ToolContext) -> ToolResult:
                 return err(f"name inválido para loja: {name!r}")
             target = f"ms-windows-store://search/?query={quote(name)}"
         else:
+            exemplo = (
+                "C:\\\\caminho\\\\app.exe" if os.name == "nt" else "/usr/bin/" + name
+            )
             return err(
                 f"app {name!r} não está cadastrado. Cadastre em aris_agent.json: "
-                '"sections": { "pc": { "apps": { "' + name + '": "C:\\\\caminho\\\\app.exe" } } } '
-                "(o valor pode ser caminho de exe ou URI como https://...)."
+                '"sections": { "pc": { "apps": { "' + name + '": "' + exemplo + '" } } } '
+                "(o valor pode ser caminho de executável ou URI como https://...)."
             )
 
     expanded = os.path.expandvars(target.strip().strip('"'))
     if _looks_like_uri(expanded):
-        if not hasattr(os, "startfile"):
-            return err("abrir URI precisa de Windows (os.startfile ausente)")
-        os.startfile(expanded)
+        falha = _open_target(expanded, executable=False)
+        if falha:
+            return err(falha)
         log.info("pc_open_app: %s -> URI %s", name, expanded)
         return ok_result(f"aberto: {name} -> {expanded}", data={"name": name, "target": expanded})
 
@@ -111,9 +148,9 @@ def pc_open_app(args: dict, ctx: ToolContext) -> ToolResult:
             return err(f"não encontrei {expanded!r} no PATH nem nas raízes permitidas")
     if not path.exists():
         return err(f"caminho cadastrado para {name!r} não existe: {path}")
-    if not hasattr(os, "startfile"):
-        return err("abrir app precisa de Windows (os.startfile ausente)")
-    os.startfile(str(path))
+    falha = _open_target(str(path), executable=True)
+    if falha:
+        return err(falha)
     log.info("pc_open_app: %s -> %s", name, path)
     return ok_result(
         f"aberto: {name} -> {path}", data={"name": name, "target": str(path)}

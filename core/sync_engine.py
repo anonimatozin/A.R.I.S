@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from core.memcore.paths import default_memory_root
 from utils.logger import Logger
 
 
@@ -27,7 +28,7 @@ class SyncEngine:
 
     def __init__(
         self,
-        db_path: Path | str = "D:/ARIS_MEMORY/database/aris_memory.db",
+        db_path: Path | str = default_memory_root() / "database" / "aris_memory.db",
         logger: Logger | None = None,
     ) -> None:
         self._db_path = Path(db_path)

@@ -1,0 +1,25 @@
+# A.R.I.S. — dependências OPCIONAIS (cada bloco liga um recurso).
+# O núcleo roda só com requirements.txt; instale o que for usar:
+#   pip install -r requirements-optional.txt
+
+# Bot do Discord (modules/discord_bot.py) — sem isto os testes de Discord falham
+discord.py>=2.3.0
+
+# ESP32 por WebSocket (modules/esp32_hardware.py)
+websockets>=12.0
+
+# Visão / gestos / HUD (core/vision, gesture_trainer)
+numpy>=1.26
+opencv-python>=4.9
+mediapipe>=0.10
+
+# STT offline alternativo (utils/voice_hybrid.py, modules/dictation_mode.py)
+vosk>=0.3.45
+
+# Olhos da ARIS (aris_eyes) têm requirements próprios:
+#   pip install -r aris_eyes/requirements.txt     # PySide6
+
+# Linux — pacotes do sistema (apt), fora do pip:
+#   sudo apt install portaudio19-dev xdg-utils espeak-ng wmctrl xdotool xclip scrot
+#   (usados por: abrir apps, voz de fallback, janelas, área de transferência, captura de tela;
+#    no Wayland, troque xclip por wl-clipboard)

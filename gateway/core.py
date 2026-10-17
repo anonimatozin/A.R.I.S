@@ -551,8 +551,8 @@ class CoreOps:
 
     def _get_personality(self) -> dict:
         """Retorna a personalidade sincronizada para o painel web."""
-        from pathlib import Path
-        personality_path = Path("D:/ARIS_MEMORY/personality_sync.md")
+        from core.memcore.paths import default_memory_root
+        personality_path = default_memory_root() / "personality_sync.md"
         try:
             if personality_path.exists():
                 content = personality_path.read_text(encoding="utf-8")

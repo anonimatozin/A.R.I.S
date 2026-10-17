@@ -10,7 +10,28 @@ voltar a ficar disponível.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def is_foreign_windows_path(raw: str | os.PathLike[str]) -> bool:
+    """True se ``raw`` é um caminho de unidade do Windows (``D:/x``) fora do Windows.
+
+    No Linux/macOS, ``Path("D:/x")`` é um caminho *relativo* válido: o ``mkdir``
+    criaria uma pasta literal chamada ``D:`` dentro do diretório atual e a
+    memória passaria a depender de onde a ARIS foi iniciada.
+    """
+    return os.name != "nt" and bool(_WINDOWS_DRIVE_RE.match(str(raw)))
+
+
+def default_memory_root() -> Path:
+    """Raiz padrão da memória: D:/ARIS_MEMORY no Windows, ``<projeto>/data/memory`` no resto."""
+    if os.name == "nt":
+        return Path("D:/ARIS_MEMORY")
+    return _PROJECT_ROOT / "data" / "memory"
 
 
 def resolve_memory_root(
@@ -19,10 +40,15 @@ def resolve_memory_root(
 ) -> tuple[Path, bool]:
     """Retorna (root, primary_available).
 
-    ``primary`` é o caminho preferido (padrão D:/ARIS_MEMORY).
-    Cria o diretório quando possível.
+    ``primary`` é o caminho preferido (padrão: ``default_memory_root()``).
+    Cria o diretório quando possível. Caminhos de unidade do Windows
+    (``D:/...``) são ignorados fora do Windows.
     """
-    p = primary or Path(os.getenv("ARIS_MEMORY_ROOT", "D:/ARIS_MEMORY"))
+    if primary is not None and not is_foreign_windows_path(primary):
+        p = primary
+    else:
+        env = os.getenv("ARIS_MEMORY_ROOT", "")
+        p = Path(env) if env and not is_foreign_windows_path(env) else default_memory_root()
     try:
         p.mkdir(parents=True, exist_ok=True)
         probe = p / ".write_test"

@@ -20,6 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from core.memcore.paths import is_foreign_windows_path
+
 _DEFAULT_DB_NAME = "aris_memory.db"
 
 
@@ -32,12 +34,15 @@ def _resolve_db_dir() -> Path:
     3. Fallback: <projeto>/data/memory/ (se D: não existir)
     """
     env = os.getenv("ARIS_MEMORY_DIR", "")
-    if env:
+    if env and not is_foreign_windows_path(env):
         return Path(env)
 
-    primary = Path("D:/ARIS_MEMORY")
-    if primary.parent.exists():  # Verifica se o drive D: existe
-        return primary
+    # Só faz sentido procurar o drive D: no Windows. No Linux, Path("D:/x") é
+    # relativo e acabava criando/usando uma pasta "D:" no diretório atual.
+    if os.name == "nt":
+        primary = Path("D:/ARIS_MEMORY")
+        if primary.parent.exists():  # Verifica se o drive D: existe
+            return primary
 
     # Fallback: dentro do projeto
     return Path(__file__).resolve().parent.parent / "data" / "memory"

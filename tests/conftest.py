@@ -18,3 +18,21 @@ def _eyes_bridge_off(monkeypatch):
     """
     monkeypatch.setenv("ARIS_EYES", "0")
     monkeypatch.setenv("ARIS_EYES_AUTOLAUNCH", "0")
+
+
+@pytest.fixture(autouse=True)
+def _isola_modo_da_aris():
+    """Zera o ModeManager global entre testes.
+
+    Antes, tests/test_distributed.py deixava a ARIS em modo EDGE e
+    test_new_phases.py::test_executor_confirmation_required falhava só quando
+    rodava depois dele ("Tool 'pc_shutdown' not available in edge mode").
+    """
+    try:
+        from core.neural.mode import reset_mode_manager
+    except Exception:  # pragma: no cover - núcleo não importável neste ambiente
+        yield
+        return
+    reset_mode_manager()
+    yield
+    reset_mode_manager()

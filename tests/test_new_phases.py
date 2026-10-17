@@ -682,6 +682,8 @@ class TestPCControl:
         from core.tools.pc_control import PCControl
         ctrl = PCControl()
         ctrl._run_ps = lambda cmd, timeout=10: {"ok": True, "stdout": "mocked"}
+        # No Linux o PCControl usa _run_argv (systemctl/loginctl) em vez do PowerShell.
+        ctrl._run_argv = lambda argv, timeout=10: {"ok": True, "stdout": "mocked"}
         return ctrl
 
     def test_pc_control_singleton(self):

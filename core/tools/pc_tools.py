@@ -6,11 +6,17 @@ Sandbox/path protection obrigatorio. Path traversal bloqueado pelo SecurityGate.
 from __future__ import annotations
 
 import glob
+import json
 import os
+import platform
+import re
 import shutil
 import subprocess
 import time
 from typing import Any
+
+_IS_WINDOWS = os.name == "nt"
+_LOG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")
 
 
 def _safe_path(base: str, path: str) -> str | None:
@@ -243,31 +249,74 @@ def pc_run_command(params: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def pc_processes() -> dict[str, Any]:
     """Lista processos do PC."""
-    return _run_cmd("tasklist /FO CSV /NH", timeout=10)
+    if _IS_WINDOWS:
+        return _run_cmd("tasklist /FO CSV /NH", timeout=10)
+    return _run_cmd("ps -eo pid,comm,%cpu,%mem --sort=-%cpu", timeout=10)
 
 
 def pc_services() -> dict[str, Any]:
-    """Lista servicos do PC."""
-    return _run_cmd("net start", timeout=10)
+    """Lista servicos do PC (Windows: ``net start``; Linux: serviços systemd ativos)."""
+    if _IS_WINDOWS:
+        return _run_cmd("net start", timeout=10)
+    if shutil.which("systemctl") is None:
+        return {"ok": False, "error": "systemctl não encontrado (sistema sem systemd)"}
+    return _run_cmd(
+        "systemctl list-units --type=service --state=running --no-pager --plain --no-legend",
+        timeout=10,
+    )
 
 
 def pc_logs(params: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Le logs do PC."""
+    """Le logs do PC (Windows: Event Log; Linux: journalctl)."""
     params = params or {}
-    log_name = params.get("log", "Application")
-    count = params.get("count", 50)
-    return _run_cmd(
-        f'powershell -Command "Get-EventLog -LogName {log_name} -Newest {count} | Select-Object TimeGenerated,EntryType,Message | ConvertTo-Json"',
-        timeout=15,
-    )
+    log_name = str(params.get("log", "Application"))
+    try:
+        count = max(1, min(int(params.get("count", 50)), 500))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "count deve ser um número inteiro"}
+
+    # log_name entra numa string de PowerShell: precisa ser um nome simples,
+    # senão "Application; <comando>" viraria execução arbitrária.
+    if not _LOG_NAME_RE.match(log_name):
+        return {"ok": False, "error": "nome de log inválido"}
+
+    if _IS_WINDOWS:
+        return _run_cmd(
+            f'powershell -Command "Get-EventLog -LogName {log_name} -Newest {count} | Select-Object TimeGenerated,EntryType,Message | ConvertTo-Json"',
+            timeout=15,
+        )
+    if shutil.which("journalctl") is None:
+        return {"ok": False, "error": "journalctl não encontrado (sistema sem systemd)"}
+    # "System"/"Application" são nomes do Windows; no Linux usamos o journal inteiro,
+    # e "Security" vira só mensagens de auth.
+    argv = f"journalctl -n {count} --no-pager"
+    if log_name.lower() == "security":
+        argv += " SYSLOG_FACILITY=4 SYSLOG_FACILITY=10"
+    return _run_cmd(argv, timeout=15)
 
 
 def pc_system_status() -> dict[str, Any]:
     """Status do PC."""
-    return _run_cmd(
-        'powershell -Command "Get-ComputerInfo | Select-Object CsName,WindowsVersion,OsArchitecture,CsTotalPhysicalMemory | ConvertTo-Json"',
-        timeout=15,
-    )
+    if _IS_WINDOWS:
+        return _run_cmd(
+            'powershell -Command "Get-ComputerInfo | Select-Object CsName,WindowsVersion,OsArchitecture,CsTotalPhysicalMemory | ConvertTo-Json"',
+            timeout=15,
+        )
+    info: dict[str, Any] = {
+        "CsName": platform.node(),
+        "OsName": platform.system(),
+        "OsVersion": platform.release(),
+        "OsArchitecture": platform.machine(),
+    }
+    try:
+        import psutil
+
+        info["CsTotalPhysicalMemory"] = psutil.virtual_memory().total
+        info["CpuCount"] = psutil.cpu_count(logical=True)
+        info["UptimeSeconds"] = int(time.time() - psutil.boot_time())
+    except Exception:  # psutil ausente ou sem permissão: devolve só o básico
+        pass
+    return {"ok": True, "stdout": json.dumps(info, ensure_ascii=False), "stderr": "", "returncode": 0}
 
 
 # ── PC Control (Phase H) ──────────────────────────────────────

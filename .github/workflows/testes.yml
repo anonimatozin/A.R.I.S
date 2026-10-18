@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QT_QPA_PLATFORM: offscreen
+      # Saída linha a linha: sem isso o stdout block-buffered esconde
+      # onde a suíte travou (perdido no SIGKILL do cancelamento).
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -44,13 +47,20 @@ jobs:
           # openwakeword sem dependências + backend ONNX (suficiente p/ os
           # modelos .onnx, incluindo o treinado da Áris).
           pip install --no-deps openwakeword
+          # Guarda diagnóstica: um teste que travar vira FALHA com nome em
+          # 10 min em vez de segurar o job por horas (já houve um hang de
+          # 30 min na CI; ver timeout= abaixo). Só muda o harness do CI,
+          # nenhum arquivo de teste é alterado.
+          pip install pytest-timeout
 
       # python -m pytest (e não o atalho `pytest`): sem __init__.py em
       # tests/, só o modo -m põe o cwd no sys.path — é assim que a suíte
       # roda localmente e sem isso `import aris_agent/core` quebra.
+      # -v: loga o NOME de cada teste na hora (sem -v os pontos do modo
+      # -q não dizem onde exatamente algo travou).
       - name: Suíte raiz
         run: >
-          python -m pytest -q --tb=short -p no:cacheprovider
+          python -m pytest -v --timeout=600 --tb=short -p no:cacheprovider
           --deselect tests/test_integration_nlu.py::TestNLUFastPath::test_conversation_returns_none
           --deselect tests/test_gmail.py::TestTokenStorage::test_store_and_load_tokens
           --deselect tests/test_gmail.py::TestTokenStorage::test_load_stored_tokens
@@ -61,6 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QT_QPA_PLATFORM: offscreen
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 

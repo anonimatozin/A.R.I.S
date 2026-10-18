@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import unicodedata
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -61,6 +62,74 @@ from utils.logger import Logger
 
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Wake word (palavra inteira + fuzzy ≤1) ───
+
+def _fold(text: str) -> str:
+    """Minúsculas e sem acento: "Áris" e "aris" viram a mesma coisa."""
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+def _distancia_edicao(a: str, b: str, max_dist: int = 1) -> int:
+    """Distância de edição com parada precoce (só interessa ≤ max_dist)."""
+    if abs(len(a) - len(b)) > max_dist:
+        return max_dist + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        row_min = i
+        for j, cb in enumerate(b, 1):
+            val = min(
+                prev[j] + 1,               # deleção
+                curr[j - 1] + 1,           # inserção
+                prev[j - 1] + (ca != cb),  # substituição
+            )
+            curr.append(val)
+            if val < row_min:
+                row_min = val
+        if row_min > max_dist:
+            return max_dist + 1
+        prev = curr
+    return prev[-1]
+
+
+def matches_wake_word(text: str, wake_words: tuple) -> bool:
+    """True se alguma wake word aparece como PALAVRA INTEIRA (ou quase) em ``text``.
+
+    Duas camadas, ambas de bugs medidos em execução real:
+    - palavra inteira sem acento: "Paris", "Maris", "varis" e "arisco" NÃO
+      acordam (antes era substring e acordavam);
+    - fuzzy ≤1 edição, só em palavras ≥4 letras com a MESMA letra inicial:
+      o whisper tiny ouviu o próprio nome como "Ares" e o casamento exato
+      descartava o comando em silêncio — "Ares" acorda, "varis" não.
+    """
+    if not text or not wake_words:
+        return False
+    folded = _fold(text)
+    wakes = tuple(w for w in (_fold(str(w)).strip() for w in wake_words) if w)
+    if not wakes:
+        return False
+    for wake in wakes:
+        if re.search(r"(?<!\w)" + re.escape(wake) + r"(?!\w)", folded):
+            return True
+    # fuzzy: palavras ≥ 4 letras, mesma letra inicial, distância ≤ 1
+    tokens = [t for t in re.findall(r"[a-z0-9]+", folded) if len(t) >= 4]
+    for token in tokens:
+        for wake in wakes:
+            if (len(wake) >= 4 and token[0] == wake[0]
+                    and _distancia_edicao(token, wake, 1) <= 1):
+                return True
+    return False
+
+
+#: Vocabulário guia do faster-whisper (initial_prompt): nomes da ARIS e
+#: verbetes frequentes — reduz erro de transcrição em português.
+_STT_INITIAL_PROMPT = (
+    "Aris, Áris, A.R.I.S. Abrir navegador, tocar música, pausar, volume "
+    "mais alto, que horas são, timer, lembrete, desligar, dormir, obrigado."
+)
 
 
 # ─── Configuração ───
@@ -110,6 +179,7 @@ class ContinuousVoiceSensor:
         event_bus=None,
         config: Optional[ContinuousVoiceConfig] = None,
         logger: Optional[Logger] = None,
+        esta_falando_fn: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._send_message = send_message_fn
         self._event_bus = event_bus
@@ -158,6 +228,19 @@ class ContinuousVoiceSensor:
         # Quando verdadeiro, o loop continua acumulando áudio em vez de resetar o buffer
         self._wake_word_in_speech = False
 
+        # Motor dedicado de wake word (core/perception/wake_engine.py).
+        # None = modo transcript (o loop nativo de antes, inalterado); um
+        # OpenWakeWordEngine ativo decide o acordar ANTES de transcrever.
+        self._wake_engine = None
+        self._wake_pelo_motor = False   # o motor acordou neste segmento
+        self._limiar_motor = 0.5        # ARIS_WAKE_THRESHOLD (lido no start)
+        contexto_ms = 1000              # ~1 s de contexto p/ não cortar o começo
+        self._contexto: deque[bytes] = deque(
+            maxlen=max(1, contexto_ms // max(1, self._config.frame_duration_ms))
+        )
+        # Para exigir score maior enquanto a ARIS está falando (barge-in).
+        self._esta_falando = esta_falando_fn or (lambda: False)
+
         # Callbacks
         self._on_transcript: Optional[Callable[[str], None]] = None
 
@@ -180,6 +263,109 @@ class ContinuousVoiceSensor:
             self.start()
         elif not enabled and self._running:
             self.stop()
+
+    def _criar_wake_engine(self) -> None:
+        """Monta o motor de wake word escolhido (ARIS_WAKE_ENGINE).
+
+        - openwakeword: motor dedicado — decide o acordar antes de transcrever
+          (CPU baixa e nada é transcrito antes de acordar). Se a dependência
+          opcional/modelo faltar, wake_engine avisa uma vez e caímos no
+          modo transcript.
+        - transcript (padrão): self._wake_engine fica None e o loop nativo
+          continua exatamente como antes (VAD -> STT -> matches_wake_word).
+        """
+        from core.perception import wake_engine
+
+        if wake_engine.escolher_engine() != "openwakeword":
+            self._wake_engine = None
+            self._logger.info("Wake word: modo transcript (STT em todo trecho de fala)")
+            return
+        engine = wake_engine.criar_engine()  # nunca levanta; avisa se cair
+        if isinstance(engine, wake_engine.OpenWakeWordEngine):
+            self._wake_engine = engine
+            self._limiar_motor = wake_engine.limiar_padrao()
+            self._logger.info(
+                "Wake word: motor dedicado openWakeWord "
+                f"(limiar {self._limiar_motor:.2f}; STT só depois de acordar)"
+            )
+        else:
+            self._wake_engine = None
+            self._logger.info("Wake word: modo transcript (STT em todo trecho de fala)")
+
+    def _wake_pontua(self, frame: bytes) -> bool:
+        """Score do motor dedicado para este frame (True = acordou).
+
+        - limiar ARIS_WAKE_THRESHOLD (padrão 0.5);
+        - +0.2 enquanto a ARIS está falando (barge-in: a própria voz não
+          deve re-acordar a ARIS);
+        - cooldown igual ao do modo transcript (entre ENTREGAS — ver
+          _despertar_por_motor).
+        Nunca levanta exceção: falha do motor vira score 0.0.
+        """
+        try:
+            score = float(self._wake_engine.process(frame))
+        except Exception:  # pragma: no cover - defesa
+            return False
+        limiar = self._limiar_motor + (0.2 if self._esta_falando() else 0.0)
+        if score < limiar:
+            return False
+        return (time.time() - self._last_wake_time
+                >= self._config.cooldown_ms / 1000)
+
+    def _despertar_por_motor(self) -> None:
+        """Acordou pelo motor dedicado: bip + listening + captura do comando.
+
+        O cooldown NÃO é marcado aqui: ele vale entre entregas — a janela
+        de captura do comando pode levar vários segundos e não pode ser
+        rejeitada pelo próprio cooldown do acordar.
+        """
+        if self._wake_pelo_motor:
+            return
+        self._wake_pelo_motor = True
+        self._wake_word_in_speech = True  # mantém a janela de captura aberta
+        if not self._in_speech:
+            # contexto (~1 s guardado no loop) para não cortar o começo
+            self._speech_buffer = list(self._contexto)
+            self._in_speech = True
+            self._speech_frames = len(self._contexto)
+            self._silence_frames = 0
+        self._logger.info("Wake word detectada pelo motor dedicado (áudio)")
+        self._tocar_bip()
+        self._publish_aris_status("listening")
+
+    def _tocar_bip(self) -> None:
+        """Bip curto de acordar (assets/sounds/wake.wav). Nunca levanta.
+
+        Reproduz com o primeiro reprodutor disponível (paplay, aplay ou
+        ffplay) em thread própria; sem nenhum, só registra em debug.
+        """
+        try:
+            import shutil
+            import subprocess
+            from pathlib import Path
+
+            wav = Path(__file__).resolve().parents[2] / "assets" / "sounds" / "wake.wav"
+            if not wav.exists():
+                self._logger.debug(f"Bip de wake word ausente: {wav}")
+                return
+            comandos = (
+                ["paplay"],
+                ["aplay", "-q"],
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"],
+            )
+            for base in comandos:
+                exe = shutil.which(base[0])
+                if not exe:
+                    continue
+                proc = subprocess.Popen(
+                    [exe, *base[1:], str(wav)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                threading.Thread(target=proc.wait, daemon=True).start()
+                return
+            self._logger.debug("Sem reprodutor (paplay/aplay/ffplay) para o bip")
+        except Exception:  # pragma: no cover - defesa
+            self._logger.debug("Falha ao tocar o bip de wake word", exc_info=True)
 
     # ─── Inicialização STT ───
 
@@ -227,6 +413,8 @@ class ContinuousVoiceSensor:
         if not self._stt_ready.wait(timeout=30):
             self._logger.error("Timeout ao carregar modelo STT")
             return
+
+        self._criar_wake_engine()
 
         self._stop_event.clear()
         self._running = True
@@ -329,6 +517,15 @@ class ContinuousVoiceSensor:
                 self._frame_count += 1
                 if self._frame_count <= warmup_frames:
                     continue
+
+                # Motor dedicado de wake word (ARIS_WAKE_ENGINE=openwakeword):
+                # decide o acordar ANTES de transcrever — CPU baixa o tempo
+                # todo e nada é transcrito antes de acordar (privacidade).
+                # No modo transcript (padrão) este bloco fica de fora.
+                if self._wake_engine is not None:
+                    self._contexto.append(frame)
+                    if self._wake_pontua(frame):
+                        self._despertar_por_motor()
 
                 # VAD
                 is_speech = self._is_speech(frame)
@@ -447,55 +644,20 @@ class ContinuousVoiceSensor:
     @staticmethod
     def _normalize_for_wake(text: str) -> str:
         """Minúsculas e sem acentos ('arís' ≈ 'aris' na comparação)."""
-        lowered = text.lower()
-        return "".join(
-            c for c in unicodedata.normalize("NFD", lowered)
-            if unicodedata.category(c) != "Mn"
-        )
+        return _fold(text)
 
     @staticmethod
     def _levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         """Distância de edição com parada precoce (só interessa ≤ max_dist)."""
-        if abs(len(a) - len(b)) > max_dist:
-            return max_dist + 1
-        prev = list(range(len(b) + 1))
-        for i, ca in enumerate(a, 1):
-            curr = [i]
-            row_min = i
-            for j, cb in enumerate(b, 1):
-                val = min(
-                    prev[j] + 1,               # deleção
-                    curr[j - 1] + 1,           # inserção
-                    prev[j - 1] + (ca != cb),  # substituição
-                )
-                curr.append(val)
-                if val < row_min:
-                    row_min = val
-            if row_min > max_dist:
-                return max_dist + 1
-            prev = curr
-        return prev[-1]
+        return _distancia_edicao(a, b, max_dist)
 
     def _match_wake_word(self, transcript: str) -> bool:
-        """Wake word: substring (comportamento original) + fuzzy ≤1 edição.
+        """Wake word pela função do módulo (palavra inteira + fuzzy ≤1).
 
-        Bug real medido em execução ao vivo (12:50): o whisper tiny
-        ouviu o próprio nome do usuário como "Ares" (não "Aris") e a
-        lista fixa não casava — o comando era descartado em silêncio.
-        O fuzzy palavra-a-palavra (distância de edição ≤1, palavras
-        ≥4 letras) cobre transcrições fonéticas próximas sem disparar
-        em termos curtos ("bares"/"claridade" continuam fora).
+        Ver matches_wake_word: 'Paris'/'varis'/'arisco' não acordam; 'Ares'
+        acorda (bug real: o whisper ouve o nome assim às vezes).
         """
-        text = self._normalize_for_wake(transcript)
-        wakes = tuple(self._normalize_for_wake(w) for w in self._wake_words)
-        if any(w in text for w in wakes):
-            return True
-        tokens = [t for t in re.findall(r"[a-z0-9]+", text) if len(t) >= 4]
-        for token in tokens:
-            for wake in wakes:
-                if len(wake) >= 4 and self._levenshtein(token, wake, 1) <= 1:
-                    return True
-        return False
+        return matches_wake_word(transcript, self._wake_words)
 
     def _process_speech_buffer(self) -> bool:
         """Processa buffer de fala acumulado via STT.
@@ -503,7 +665,29 @@ class ContinuousVoiceSensor:
         Returns:
             True quando o comando foi entregue ao ARIS (wake word válida).
         """
-        if not self._speech_buffer:
+        try:
+            if not self._speech_buffer:
+                return False
+            return self._processar_buffer_fala()
+        finally:
+            # Fim da utterância: zera a "janela acordada" do motor dedicado
+            # (senão o próximo segmento seria tratado como comando) e o
+            # contexto interno do motor (senão ele re-acordaria no mesmo áudio).
+            self._wake_pelo_motor = False
+            if self._wake_engine is not None:
+                try:
+                    self._wake_engine.reset()
+                except Exception:
+                    pass
+
+    def _processar_buffer_fala(self) -> bool:
+        # Motor dedicado (ARIS_WAKE_ENGINE=openwakeword): SÓ transcreve
+        # depois de acordar — fala alheia/TV nunca chega ao STT (privacidade).
+        if self._wake_engine is not None and not self._wake_pelo_motor:
+            self._logger.debug(
+                "Segmento sem wake word — descartado sem STT (motor dedicado)"
+            )
+            self._speech_buffer = []
             return False
 
         # Concatenar frames
@@ -512,12 +696,22 @@ class ContinuousVoiceSensor:
         self._logger.debug(f"Processando buffer: {len(audio_data)} bytes = {duration_ms:.0f}ms")
         self._speech_buffer = []
 
-        # Verificar wake word ANTES de emitir - para poder continuar ouvindo
-        transcript = self._transcribe(audio_data) or ""
-        woke_up = self._match_wake_word(transcript)
-
+        # Verificar wake word ANTES de emitir - para poder continuar ouvindo.
+        # Com o motor dedicado, o áudio JÁ acordou (janela do motor vale).
+        t_stt = time.time()
+        transcript = ""
+        woke_up = False
         delivered = False
         try:
+            transcript = self._transcribe(audio_data) or ""
+            woke_up = self._wake_pelo_motor or self._match_wake_word(transcript)
+            # Tempo por comando: INFO quando vira comando, DEBUG no resto —
+            # é o número que se compara antes/depois de trocar o motor.
+            (self._logger.info if woke_up else self._logger.debug)(
+                f"STT: {duration_ms:.0f}ms de áudio em {(time.time() - t_stt) * 1000:.0f}ms "
+                f"({'wake word' if woke_up else 'sem wake word'})"
+            )
+
             if transcript:
                 self._logger.debug(f"Transcrito: '{transcript}'")
                 # Se detectou wake word, marcar para continuar ouvindo
@@ -566,7 +760,7 @@ class ContinuousVoiceSensor:
 
                 segments, info = self._stt_model.transcribe(
                     audio_np,
-                    language=self._config.language,
+                    language=self._config.language,   # pt — nunca detectar idioma
                     beam_size=1,
                     best_of=1,
                     temperature=0.0,
@@ -574,6 +768,12 @@ class ContinuousVoiceSensor:
                     compression_ratio_threshold=2.4,
                     log_prob_threshold=-1.0,
                     no_speech_threshold=0.6,
+                    # VAD do próprio faster-whisper: corta trechos sem fala
+                    # antes do modelo (menos CPU e menos alucinação).
+                    vad_filter=True,
+                    # Vocabulário da ARIS: "Aris", "Áris" e os verbetes mais
+                    # falados guiam o modelo (menos erros de transcrição).
+                    initial_prompt=_STT_INITIAL_PROMPT,
                 )
 
                 text = " ".join(seg.text for seg in segments).strip()
@@ -620,7 +820,9 @@ class ContinuousVoiceSensor:
         # match exato, então quando o whisper ouvia "Ares" (não "Aris")
         # a etapa 1 passava (fuzzy) mas esta etapa REJEITAVA e o comando
         # era descartado em silêncio — "às vezes ela não responde".
-        wake_detected = self._match_wake_word(transcript_lower)
+        # Com o motor dedicado (openwakeword) o ÁUDIO já confirmou o acordar;
+        # o texto do comando pode nem conter a wake word.
+        wake_detected = self._wake_pelo_motor or self._match_wake_word(transcript_lower)
 
         now = time.time()
         if wake_detected:

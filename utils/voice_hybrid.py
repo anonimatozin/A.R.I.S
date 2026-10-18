@@ -214,12 +214,29 @@ class HybridVoice:
                 return
             try:
                 if self._tts_engine == "edge-tts":
-                    self._speak_edge(text)
+                    # Streaming por frase: cada frase é sintetizada e falada
+                    # na hora — a primeira frase de uma resposta longa sai
+                    # ~1-2 s antes (antes o texto INTEIRO era sintetizado
+                    # antes de qualquer som) e o stop responde entre frases.
+                    for frase in self._frases_para_falar(text):
+                        if self._stop_requested:
+                            break
+                        self._speak_edge(frase)
                 elif self._tts_engine and hasattr(self._tts_engine, "say"):
                     self._tts_engine.say(text)
                     self._tts_engine.runAndWait()
             except Exception:
                 pass
+
+    @staticmethod
+    def _frases_para_falar(text: str) -> list[str]:
+        """Divide o texto em frases (pontuação final) p/ o streaming do TTS.
+
+        Enumerações longas sem pontuação (>200 chars) seguem inteiras —
+        melhor prosódia que partir no meio de uma vírgula.
+        """
+        partes = [p.strip() for p in re.split(r"(?<=[.!?;…])\s+", text.strip())]
+        return [p for p in partes if p] or [text]
 
     def _speak_edge(self, text: str) -> None:
         """Fala usando edge-tts (online) com disjuntor + fallback offline.
@@ -486,12 +503,24 @@ class HybridVoice:
         return clean.strip()
 
     async def _edge_tts_speak(self, text: str) -> None:
-        """Gera áudio via edge-tts e reproduz."""
+        """Gera áudio via edge-tts e reproduz.
+
+        Cache em disco de frases curtas (ARIS_TTS_CACHE=0 desliga): frases
+        já ouvidas tocam direto do cache (~/.cache/aris/tts), sem rede e
+        sem a latência da síntese — "Pronto!", "Aviso!" e companhia saem
+        instantâneos.
+        """
         clean = self._clean_for_tts(text)
         if not clean.strip():
             return
 
         voice = os.getenv("ARIS_TTS_VOICE", "pt-BR-FranciscaNeural")
+        arquivo_cache = self._arquivo_cache_tts(clean, voice)
+        if arquivo_cache and os.path.exists(arquivo_cache):
+            self._log("debug", f"TTS cache hit: {clean[:48]!r}")
+            if self._reproduzir_audio(arquivo_cache):
+                return
+
         # Arquivo único por fala: evita colisão entre instâncias (HUD + ARIS).
         tmp_file = os.path.join(tempfile.gettempdir(), f"aris_speech_{uuid.uuid4().hex}.mp3")
 
@@ -499,57 +528,18 @@ class HybridVoice:
             communicate = edge_tts.Communicate(text, voice)
             await communicate.save(tmp_file)
 
+            if arquivo_cache:
+                try:
+                    import shutil
+                    shutil.copyfile(tmp_file, arquivo_cache)
+                    self._podar_cache_tts(os.path.dirname(arquivo_cache))
+                except OSError:
+                    pass  # cache é conforto, nunca quebra a fala
+
             if self._stop_requested:
                 return
 
-            # Reproduzir com pygame; se falhar, usa o Windows MCI.
-            played = False
-            try:
-                import pygame
-                if not pygame.mixer.get_init():
-                    pygame.mixer.init()
-                pygame.mixer.music.load(tmp_file)
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy():
-                    pygame.time.wait(100)
-                played = True
-            except ImportError:
-                pass
-            except Exception as exc:
-                self._log("debug", f"pygame falhou ao tocar áudio: {exc}")
-
-            if not played:
-                # Fallback: usar Windows MCI, aguardando a duração real do áudio
-                try:
-                    import ctypes
-                    import time as _time
-                    ctypes.windll.winmm.mciSendStringW(
-                        f'open "{tmp_file}" type mpegvideo alias aris_speak', None, 0, None
-                    )
-
-                    length_buf = ctypes.create_unicode_buffer(64)
-                    ctypes.windll.winmm.mciSendStringW(
-                        "status aris_speak length", length_buf, 64, None
-                    )
-                    try:
-                        total_ms = int(length_buf.value)
-                    except (ValueError, TypeError):
-                        total_ms = 0
-                    max_seconds = (total_ms / 1000.0 + 2.0) if total_ms > 0 else 60.0
-
-                    ctypes.windll.winmm.mciSendStringW("play aris_speak", None, 0, None)
-                    started = _time.monotonic()
-                    while _time.monotonic() - started < max_seconds:
-                        mode_buf = ctypes.create_unicode_buffer(64)
-                        ctypes.windll.winmm.mciSendStringW(
-                            "status aris_speak mode", mode_buf, 64, None
-                        )
-                        if mode_buf.value.strip().lower() != "playing":
-                            break
-                        _time.sleep(0.25)
-                    ctypes.windll.winmm.mciSendStringW("close aris_speak", None, 0, None)
-                except Exception as exc:
-                    self._log("warning", f"MCI falhou ao tocar áudio: {exc}")
+            self._reproduzir_audio(tmp_file)
         finally:
             # Liberar o arquivo (pygame/MCI podem mantê-lo aberto) e limpar
             try:
@@ -564,6 +554,101 @@ class HybridVoice:
                     break
                 except OSError:
                     time.sleep(0.2)
+
+    def _reproduzir_audio(self, caminho: str) -> bool:
+        """Reproduz um arquivo de áudio (pygame; fallback Windows MCI).
+
+        Returns:
+            True se algum reprodutor tocou.
+        """
+        # Reproduzir com pygame; se falhar, usa o Windows MCI.
+        try:
+            import pygame
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            pygame.mixer.music.load(caminho)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                pygame.time.wait(100)
+            return True
+        except ImportError:
+            pass
+        except Exception as exc:
+            self._log("debug", f"pygame falhou ao tocar áudio: {exc}")
+
+        # Fallback: usar Windows MCI, aguardando a duração real do áudio
+        try:
+            import ctypes
+            import time as _time
+            ctypes.windll.winmm.mciSendStringW(
+                f'open "{caminho}" type mpegvideo alias aris_speak', None, 0, None
+            )
+
+            length_buf = ctypes.create_unicode_buffer(64)
+            ctypes.windll.winmm.mciSendStringW(
+                "status aris_speak length", length_buf, 64, None
+            )
+            try:
+                total_ms = int(length_buf.value)
+            except (ValueError, TypeError):
+                total_ms = 0
+            max_seconds = (total_ms / 1000.0 + 2.0) if total_ms > 0 else 60.0
+
+            ctypes.windll.winmm.mciSendStringW("play aris_speak", None, 0, None)
+            started = _time.monotonic()
+            while _time.monotonic() - started < max_seconds:
+                mode_buf = ctypes.create_unicode_buffer(64)
+                ctypes.windll.winmm.mciSendStringW(
+                    "status aris_speak mode", mode_buf, 64, None
+                )
+                if mode_buf.value.strip().lower() != "playing":
+                    break
+                _time.sleep(0.25)
+            ctypes.windll.winmm.mciSendStringW("close aris_speak", None, 0, None)
+            return True
+        except Exception as exc:
+            self._log("warning", f"MCI falhou ao tocar áudio: {exc}")
+            return False
+
+    def _dir_cache_tts(self) -> str | None:
+        """Diretório do cache de TTS; None se desligado (ARIS_TTS_CACHE=0)."""
+        if os.getenv("ARIS_TTS_CACHE", "1").strip().lower() in ("0", "false", "no", "off"):
+            return None
+        base = os.getenv("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+        caminho = os.path.join(base, "aris", "tts")
+        try:
+            os.makedirs(caminho, exist_ok=True)
+            return caminho
+        except OSError:
+            return None
+
+    def _arquivo_cache_tts(self, clean: str, voice: str) -> str | None:
+        """Caminho do cache p/ esta frase+voz (None p/ frases longas)."""
+        if len(clean) > 120:  # só frases curtas/frequentes valem o cache
+            return None
+        dir_cache = self._dir_cache_tts()
+        if not dir_cache:
+            return None
+        import hashlib
+        digest = hashlib.sha1(f"{voice}|{clean}".encode()).hexdigest()
+        return os.path.join(dir_cache, f"{digest}.mp3")
+
+    @staticmethod
+    def _podar_cache_tts(dir_cache: str, max_arquivos: int = 300) -> None:
+        """Mantém o cache no limite (remove os arquivos mais antigos)."""
+        try:
+            arquivos = [
+                os.path.join(dir_cache, nome)
+                for nome in os.listdir(dir_cache)
+                if nome.endswith(".mp3")
+            ]
+            if len(arquivos) <= max_arquivos:
+                return
+            arquivos.sort(key=os.path.getmtime)
+            for velho in arquivos[: len(arquivos) - max_arquivos]:
+                os.remove(velho)
+        except OSError:
+            pass
 
     def listen(self, timeout: int = 5, language: str = "pt-BR") -> str | None:
         """Escuta áudio do microfone e converte em texto.

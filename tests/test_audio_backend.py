@@ -362,8 +362,9 @@ def test_wake_word_fuzzy_matches_whisper_homophone():
     assert sensor._match_wake_word(
         "Ares você não está falando em voz  Ares está aí  Ares, tudo bem"
     ) is True
-    # Substring (comportamento original preservado)
-    assert sensor._match_wake_word("Arista aí") is True
+    # Substring NÃO acorda mais (correção da wake word por palavra inteira:
+    # "arista"/"arisco" são outras palavras — ver tests/test_wake_word.py)
+    assert sensor._match_wake_word("Arista aí") is False
     # Acento normalizado
     assert sensor._match_wake_word(" oi arís ") is True
 

@@ -146,6 +146,25 @@ Música usa `playerctl` (preferido) ou `busctl`/`dbus-send` (MPRIS direto);
 fone usa `pactl` ou `wpctl` (PipeWire). Sem nenhum, o recurso desliga uma
 vez no log. Detalhes e testes: `tests/test_eyes_ambient.py`.
 
+### Voz — wake word e TTS
+
+A wake word pode ser decidida ANTES de transcrever: com o motor dedicado
+openWakeWord (offline, opcional), nada é transcrito antes de acordar —
+fala alheia/TV nunca chega ao STT. Padrão continua o modo `transcript`
+(compatível). Ao acordar toca um bip (`assets/sounds/wake.wav`), os olhos
+vão para `listening` e só o comando é transcrito.
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `ARIS_WAKE_ENGINE` | `openwakeword` (dedicado) ou `transcript` | `transcript` |
+| `ARIS_WAKE_MODEL` | Caminho do modelo .onnx treinado p/ a Áris | — |
+| `ARIS_WAKE_THRESHOLD` | Limiar do motor dedicado (0..1) | `0.5` |
+| `ARIS_TTS_CACHE` | Cache de frases curtas do TTS (`0` desliga) | `1` |
+
+TTS: frases curtas ficam em cache (`~/.cache/aris/tts`) e respostas longas
+são faladas FRASE A FRASE (primeira frase sai ~1-2 s antes). Detalhes,
+treino do modelo e medições: [`docs/WAKE_WORD.md`](docs/WAKE_WORD.md).
+
 ## Arquitetura
 
 O projeto segue uma arquitetura modular com separação clara de responsabilidades:

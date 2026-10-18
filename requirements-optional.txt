@@ -16,6 +16,12 @@ mediapipe>=0.10
 # STT offline alternativo (utils/voice_hybrid.py, modules/dictation_mode.py)
 vosk>=0.3.45
 
+# Wake word dedicada, offline e sem STT antes de acordar
+# (core/perception/wake_engine.py; ligue com ARIS_WAKE_ENGINE=openwakeword).
+# ONNX Runtime é o backend de inferência do openWakeWord.
+openwakeword>=0.6.0
+onnxruntime>=1.17
+
 # Olhos da ARIS (aris_eyes) têm requirements próprios:
 #   pip install -r aris_eyes/requirements.txt     # PySide6
 

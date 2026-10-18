@@ -144,6 +144,9 @@ class Aris:
                 device_index=self._settings.MIC_DEVICE_INDEX,
             ),
             logger=self._logger,
+            # Motor de wake word exige score maior enquanto a ARIS fala
+            # (a própria voz não deve acordar a própria ARIS).
+            esta_falando_fn=lambda: bool(self._is_speaking),
         )
 
         # Detector de palmas (2 palmas rápidas -> intro JARVIS)

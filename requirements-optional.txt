@@ -18,7 +18,11 @@ vosk>=0.3.45
 
 # Wake word dedicada, offline e sem STT antes de acordar
 # (core/perception/wake_engine.py; ligue com ARIS_WAKE_ENGINE=openwakeword).
-# ONNX Runtime é o backend de inferência do openWakeWord.
+# ATENÇÃO (Linux + Python 3.12): o openwakeword declara tflite-runtime, que
+# não tem wheel para py3.12 — instale sem as dependências dele e use o
+# backend ONNX (suficiente p/ modelos .onnx, incluindo o da Áris):
+#   pip install --no-deps openwakeword
+#   pip install onnxruntime
 openwakeword>=0.6.0
 onnxruntime>=1.17
 

@@ -37,7 +37,13 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt
-          pip install -r requirements-optional.txt
+          # requirements-optional.txt menos openwakeword: no Linux ele
+          # declara tflite-runtime, que não tem wheel p/ Python 3.12.
+          grep -v "^openwakeword" requirements-optional.txt > /tmp/opcionais.txt
+          pip install -r /tmp/opcionais.txt
+          # openwakeword sem dependências + backend ONNX (suficiente p/ os
+          # modelos .onnx, incluindo o treinado da Áris).
+          pip install --no-deps openwakeword
 
       - name: Suíte raiz
         run: >
@@ -64,7 +70,7 @@ jobs:
         working-directory: aris_eyes
         run: |
           python -m pip install -U pip
-          pip install -r requirements.txt
+          pip install pytest -r requirements.txt
 
       - name: Suíte aris_eyes
         working-directory: aris_eyes

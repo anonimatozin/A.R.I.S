@@ -34,7 +34,10 @@ export ARIS_WAKE_THRESHOLD=0.5                   # limiar 0..1
 
 Sem o `openwakeword` instalado (dependência opcional em
 `requirements-optional.txt`), o sistema avisa uma vez e permanece no modo
-transcript. Fluxo com o motor dedicado: acordou no áudio → **bip**
+transcript. **Instalação no Linux + Python 3.12** (o pacote declara
+`tflite-runtime`, que não tem wheel para py3.12): `pip install --no-deps
+openwakeword && pip install onnxruntime` — o backend ONNX é suficiente
+para os modelos `.onnx`. Fluxo com o motor dedicado: acordou no áudio → **bip**
 (`assets/sounds/wake.wav`, regenerável com
 `python assets/sounds/gerar_bip_wake.py`) → estado `listening` nos olhos →
 captura do comando por VAD → **só esse trecho** é transcrito e entregue.

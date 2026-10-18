@@ -180,8 +180,9 @@ class OpenWakeWordEngine:
         except ImportError as exc:
             raise ImportError(
                 "openWakeWord não instalado. Instale com: "
-                "pip install -r requirements-optional.txt "
-                "(precisa também de onnxruntime ou tflite-runtime)."
+                "pip install --no-deps openwakeword && pip install onnxruntime "
+                "(Linux+Python 3.12: tflite-runtime não tem wheel — ver "
+                "requirements-optional.txt e docs/WAKE_WORD.md)."
             ) from exc
 
         self._limiar = float(limiar)

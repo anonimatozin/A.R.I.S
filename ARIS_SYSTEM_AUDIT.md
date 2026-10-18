@@ -1,5 +1,18 @@
 # A.R.I.S. — Auditoria Completa do Sistema
 
+> ⚠️ **HISTÓRICO** (revisado em 18/10/2026) — este documento descreve o
+> estado do projeto NA ÉPOCA da auditoria e está **desatualizado**. Vários
+> itens que ele aponta já foram corrigidos ou mudaram desde então:
+> núcleo (`core/aris.py`) muito maior que as "543 linhas" citadas; olhos
+> v2 com cenas/ambiente (`aris_eyes/`, `utils/eyes_bridge.py`,
+> `utils/eyes_ambient.py`); wake word por palavra inteira + motor dedicado
+> (`core/perception/wake_engine.py`, ver `docs/WAKE_WORD.md`); Mini Deck
+> ESP32 com portal Wi-Fi (`firmware/esp32_aris/`); 45 scripts mortos do
+> `gateway/` movidos para `gateway/_manutencao_antiga/`; CI
+> (`.github/workflows/testes.yml`); NLU fast-path com resposta local
+> rápida (decisão mantida). Use o código e os testes como fonte da
+> verdade; este arquivo fica como referência histórica da arquitetura.
+
 > Auditoria **somente-leitura** (sem implementação, sem refatoração, sem correção).
 > Documento de referência para a arquitetura do projeto **Neural Core**.
 > Escopos marcados como não confirmados usam os rótulos:

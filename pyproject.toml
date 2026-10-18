@@ -18,8 +18,10 @@ dev = [
     "mypy>=1.0",
 ]
 
-[project.scripts]
-aris = "main:main"
+# Sem [project.scripts]: o projeto é "flat layout" com vários pacotes de
+# topo (core, utils, modules, agent, gateway...) e não é instalado via
+# pip — instalar bagunçaria o site-packages. O ponto de entrada é
+# `python main.py` (documentado no README).
 
 [tool.ruff]
 target-version = "py312"

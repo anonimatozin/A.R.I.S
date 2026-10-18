@@ -1,5 +1,7 @@
 # A.R.I.S.
 
+[![testes](https://github.com/anonimatozin/A.R.I.S/actions/workflows/testes.yml/badge.svg)](https://github.com/anonimatozin/A.R.I.S/actions/workflows/testes.yml)
+
 **A.R.I.S. — Assistente de Raciocínio e Integração de Sistemas**
 
 Assistente virtual inspirado no conceito de A.R.I.S., construído com foco em modularidade, escalabilidade e facilidade de manutenção.
@@ -44,6 +46,8 @@ Aris/
 ├── modules/                # 17 módulos (chat, desktop, scheduler,
 │                           # notifications, safety, ESP32, ...)
 ├── plugins/                # Plugins de terceiros
+├── gateway/                # Gateway HTTP/WebSocket (código vivo;
+│                           # scripts antigos em _manutencao_antiga/)
 ├── utils/                  # Utilitários (logger, terminal, voz)
 ├── firmware/esp32_aris/    # Firmware ESP32 (.ino + credentials.h)
 ├── logs/                   # Arquivos de log

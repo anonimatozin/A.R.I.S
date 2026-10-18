@@ -201,9 +201,10 @@ Humores novos ligam seus enfeites sozinhos (ex.: `mood apaixonado` → coraçõe
 a cena e os enfeites. **Desligar tudo**: `"props_enabled": false` no config.json — os comandos acima
 respondem `erro: ... desativados` e os olhos voltam ao comportamento antigo.
 
-**Como criar um prop novo**: (1) defina a matemática em `eyes/props.py` e some o nome em `PROP_NAMES`;
-(2) desenhe em `eyes/props_renderer.py`; (3) ligue a um humor em `MOOD_PROPS` (`eyes/presets.py`) ou a
-uma cena em `eyes/scenes.py`; (4) teste em `tests/test_props.py` (matemática, sem tela).
+**Como criar um prop novo**: (1) some o nome em `PROP_NAMES` e defina o spawn/itens em `eyes/props.py`;
+(2) crie a função de desenho em `_DRAWERS` de `eyes/props_renderer.py`; (3) ligue a um humor em
+`MOOD_PROPS` (`eyes/presets.py`) ou a uma cena em `eyes/scenes.py`; (4) teste em `tests/test_props.py`
+(matemática, sem tela).
 
 ## Configuração (`~/.config/aris_eyes/config.json`)
 

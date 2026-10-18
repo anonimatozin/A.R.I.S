@@ -203,6 +203,8 @@ class EyesWindow(QWidget):
             cenas = menu.addMenu("Cenas")
             for name in scene_names():
                 cenas.addAction(name, lambda s=name: self.scene_requested.emit(s))
+            cenas.addSeparator()
+            cenas.addAction("Parar cena", lambda: self.scene_requested.emit("off"))
         menu.addSeparator()
         menu.addAction("Sair", self.quit_requested.emit)
         menu.exec(global_pos)

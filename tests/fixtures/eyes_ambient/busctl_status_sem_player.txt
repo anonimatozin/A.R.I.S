@@ -1,0 +1,1 @@
+Failed to get property Status on interface org.mpris.MediaPlayer2.Player: The name org.mpris.MediaPlayer2.spotify was not provided by any .service files

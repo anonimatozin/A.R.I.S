@@ -35,6 +35,15 @@ Variáveis de ambiente:
     ARIS_EYES_AUTOLAUNCH=0      não sobe os olhos automaticamente
     ARIS_EYES_SPEECH_LEVEL=0.6  volume da fala (0..1) ao entrar em speaking
     ARIS_EYES_IDLE_MOOD=neutral força o mood ocioso (ignora personalidade)
+
+Cenas de ambiente (utils/eyes_ambient.py):
+    ``set_ambient_scene()`` guarda a cena ambiente (spotify/fone/bateria...)
+    e a envia se os olhos estão ociosos; se a ARIS está ocupada, fica
+    guardada e o próprio ``set_state`` a envia quando o estado volta a
+    ``idle`` — o estado da ARIS SEMPRE passa na frente. Depois de uma face
+    de Wi-Fi, a cena ambiente é reafirmada no próximo ciclo do ambiente.
+    ``registrar_observador()`` avisa o ambiente de cada mudança de estado
+    (ociosidade para "dormir"; "success" -> "comemorar").
 """
 
 from __future__ import annotations
@@ -77,7 +86,12 @@ WIFI_FACES: dict[str, str] = {
 # Estados em que o rosto está livre para a reação de Wi-Fi assumir.
 _ESTADOS_OCIOSOS = frozenset({None, "idle", "initializing", "offline", "wifi"})
 
+# Estados em que o AMBIENTE (cenas spotify/fone/...) pode mandar cena sem
+# brigar com a ARIS. "offline" fica de fora: ali os olhos dormem de propósito.
+OCIOSOS_AMBIENT = frozenset({None, "idle", "initializing", "wifi", "esp32_disconnected"})
+
 _lock = threading.Lock()
+_envio = threading.Lock()                # serializa rajadas de comando entre threads
 _last_state: str | None = None
 _last_mood: str | None = None
 _last_speaking = False
@@ -87,6 +101,13 @@ _launched = False
 _sent = 0                           # comandos entregues
 _failed = 0                         # sincronizações em que os olhos não responderam
 _wifi_pendente: str | None = None   # reação Wi-Fi aguardando o idle da ARIS
+
+# Cenas de ambiente (utils/eyes_ambient.py): alvo guardado + última enviada.
+_cena_ambiente: str | None = None
+_props_ambiente: tuple = ()
+_cena_enviada: str | None = None
+_props_enviados: tuple = ()
+_observadores: list = []             # callbacks de mudança de estado (ambiente)
 
 
 def _enabled() -> bool:
@@ -212,9 +233,12 @@ def _retry_after_launch() -> None:
 
 def _clear_cache_locked() -> None:
     global _last_state, _last_mood, _last_speaking
+    global _cena_enviada, _props_enviados
     _last_state = None
     _last_mood = None
     _last_speaking = False
+    _cena_enviada = None                # olhos subindo de novo: ambiente reenvia
+    _props_enviados = ()
 
 
 def set_state(state_value: str, speech_level: float | None = None) -> bool:
@@ -228,6 +252,11 @@ def set_state(state_value: str, speech_level: float | None = None) -> bool:
     global _last_state, _last_mood, _last_speaking, _last_speech_level, _sent, _failed
     if not _enabled():
         return False
+
+    with _lock:
+        mudou_estado = state_value != _last_state
+    if mudou_estado:
+        _emitir_observadores(state_value)   # ambiente: ociosidade, "success"...
 
     if state_value == "idle":
         mood = _resolve_idle_mood()
@@ -251,7 +280,14 @@ def set_state(state_value: str, speech_level: float | None = None) -> bool:
 
     commands: list[str] = []
     if mood_changed:
-        commands.append(f"state {mood}")
+        with _lock:
+            usar_cena = state_value == "idle" and bool(_cena_ambiente)
+            cena_cmds = ([f"scene {_cena_ambiente}"]
+                         + [f"prop {p} on" for p in _props_ambiente]) if usar_cena else []
+        if usar_cena:
+            commands.extend(cena_cmds)      # cena ambiente no lugar do mood ocioso
+        else:
+            commands.append(f"state {mood}")
     if speaking and mood_changed:
         commands.append(f"speech {_norm_speech(speech_level):.2f}")
     if not speaking and speech_changed:
@@ -262,16 +298,20 @@ def set_state(state_value: str, speech_level: float | None = None) -> bool:
 
     accepted = False
     try:
-        for command in commands:
-            response = _client_send(command)
-            if response is not None and not response.startswith("erro"):
-                accepted = True
+        with _envio:                        # rajada inteira: nada de intercalar com outra thread
+            for command in commands:
+                response = _client_send(command)
+                if response is not None and not response.startswith("erro"):
+                    accepted = True
     except Exception:
         accepted = False
 
     if accepted:
         with _lock:
             _sent += 1
+            if state_value == "idle" and mood_changed and _cena_ambiente:
+                _cena_enviada = _cena_ambiente   # cena ambiente chegou aos olhos
+                _props_enviados = _props_ambiente
         if state_value == "idle":
             _aplica_pendente_wifi()          # reação Wi-Fi guardada no meio de outra coisa
         return True
@@ -333,7 +373,8 @@ def _aplicar_mood_wifi(mood: str) -> bool:
         _last_speech_level = None
 
     try:
-        response = _client_send(f"state {mood}")
+        with _envio:
+            response = _client_send(f"state {mood}")
         accepted = response is not None and not response.startswith("erro")
     except Exception:
         accepted = False
@@ -341,6 +382,8 @@ def _aplicar_mood_wifi(mood: str) -> bool:
     if accepted:
         with _lock:
             _sent += 1
+            _cena_enviada = None             # face de Wi-Fi assumiu; ambiente reafirma no próximo ciclo
+            _props_enviados = ()
         return True
 
     # Olhos parados: desfaz o cache para re-tentar depois.
@@ -359,6 +402,127 @@ def _aplica_pendente_wifi() -> None:
         _wifi_pendente = None
     if pendente:
         _aplicar_mood_wifi(pendente)
+
+
+def registrar_observador(fn) -> None:
+    """Registra ``fn(estado)`` chamado a cada mudança de estado da ARIS.
+
+    Usado por ``utils/eyes_ambient.py`` (ociosidade -> cena dormir;
+    "success" -> cena comemorar). Nunca levanta; duplicata é ignorada.
+    """
+    try:
+        with _lock:
+            if fn not in _observadores:
+                _observadores.append(fn)
+    except Exception:
+        pass
+
+
+def _emitir_observadores(state_value: str) -> None:
+    """Avisa os observadores da mudança de estado. Nunca levanta."""
+    with _lock:
+        obs = tuple(_observadores)
+    for fn in obs:
+        try:
+            fn(state_value)
+        except Exception:
+            pass
+
+
+def ocosio_para_ambiente() -> bool:
+    """True se o ambiente pode mandar cena agora (a ARIS não está ocupada)."""
+    with _lock:
+        return _last_state in OCIOSOS_AMBIENT
+
+
+ocioso_para_ambiente = ocosio_para_ambiente   # alias com a grafia correta
+
+
+def enviar_comando(command: str) -> str | None:
+    """Envia um comando qualquer para os olhos (ex.: ``accent #rrggbb``).
+
+    Returns:
+        Resposta dos olhos, ou None (desligado, resposta ``erro`` ou
+        olhos parados). Nunca lança exceção.
+    """
+    global _sent
+    if not _enabled():
+        return None
+    try:
+        with _envio:
+            response = _client_send(command)
+    except Exception:
+        return None
+    if response is not None and not response.startswith("erro"):
+        with _lock:
+            _sent += 1
+        return response
+    return None
+
+
+def set_ambient_scene(scene: str | None, props=()) -> str | None:
+    """Guarda a cena de ambiente (Spotify/fone/bateria...) e a envia se possível.
+
+    Precedência: se a ARIS está ocupada (listening/thinking/speaking/...),
+    a cena fica só guardada — o próprio ``set_state("idle")`` a envia no
+    retorno ao ocioso, no lugar do ``state <mood>`` ocioso. Chamado pelo
+    ciclo de ``utils/eyes_ambient.py``; deduplica sem bater nos olhos.
+
+    Returns:
+        "aplicado" — cena enviada aos olhos agora;
+        "guardado" — ARIS ocupada; será aplicada no retorno ao idle;
+        "igual"    — já está exatamente nessa cena (dedupe);
+        None       — ponte desligada ou olhos parados (re-tenta no ciclo
+                     seguinte; tenta subir os olhos como no set_state).
+        Nunca lança exceção.
+    """
+    global _cena_ambiente, _props_ambiente, _cena_enviada, _props_enviados
+    global _sent, _failed
+    if not _enabled():
+        return None
+    nome = str(scene or "").strip().lower() or None
+    extras = tuple(sorted({str(p).strip().lower() for p in props if str(p).strip()}))
+    if nome is None:
+        extras = ()
+    with _lock:
+        _cena_ambiente, _props_ambiente = nome, extras
+        if _last_state not in OCIOSOS_AMBIENT:
+            return "guardado"
+        if nome == _cena_enviada and extras == _props_enviados:
+            return "igual"
+
+    if nome is None:
+        commands = ["scene off"]
+    else:
+        commands = [f"scene {nome}"] + [f"prop {p} on" for p in extras]
+
+    aceito = False
+    try:
+        with _envio:
+            # Reapós a fila: se a ARIS começou a falar enquanto isto esperava,
+            # desiste (o estado dela passa na frente) e fica guardado.
+            with _lock:
+                if _last_state not in OCIOSOS_AMBIENT:
+                    return "guardado"
+                if nome == _cena_enviada and extras == _props_enviados:
+                    return "igual"
+            for command in commands:
+                response = _client_send(command)
+                if response is not None and not response.startswith("erro"):
+                    aceito = True
+    except Exception:
+        aceito = False
+
+    if aceito:
+        with _lock:
+            _sent += 1
+            _cena_enviada, _props_enviados = nome, extras
+        return "aplicado"
+
+    with _lock:
+        _failed += 1
+    _maybe_launch()
+    return None
 
 
 def refresh_idle_mood() -> str:
@@ -410,6 +574,9 @@ def stats() -> dict:
             "failed": _failed,
             "launched": _launched,
             "eyes_dir": str(_EYES_DIR),
+            "cena_ambiente": _cena_ambiente,
+            "cena_enviada": _cena_enviada,
+            "observadores": len(_observadores),
         }
 
 
@@ -417,6 +584,8 @@ def reset_for_tests() -> None:
     """Zera todo o estado da ponte (usado apenas em testes)."""
     global _last_state, _last_mood, _last_speaking, _last_speech_level
     global _idle_mood, _launched, _sent, _failed, _wifi_pendente
+    global _cena_ambiente, _props_ambiente, _cena_enviada, _props_enviados
+    global _observadores
     with _lock:
         _last_state = None
         _last_mood = None
@@ -427,3 +596,8 @@ def reset_for_tests() -> None:
         _sent = 0
         _failed = 0
         _wifi_pendente = None
+        _cena_ambiente = None
+        _props_ambiente = ()
+        _cena_enviada = None
+        _props_enviados = ()
+        _observadores = []

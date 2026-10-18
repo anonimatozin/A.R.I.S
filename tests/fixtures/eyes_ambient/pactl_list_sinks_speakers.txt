@@ -1,0 +1,25 @@
+Sink #42
+	State: RUNNING
+	Name: alsa_output.pci-0000_00_1f.3.analog-stereo
+	Description: Built-in Audio Analog Stereo
+	Driver: module-alsa-card.c
+	Sample Specification: s16le 2ch 44100Hz
+	Channel Map: front-left,front-right
+	Owner Module: 6
+	Mute: no
+	Volume: front-left: 32768 /  50% / -19.39 dB, front-right: 32768 /  50% / -19.39 dB
+	        balance 0.00
+	Base Volume: 65536 / 100% / 0.00 dB
+	Monitor Source: alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
+	Latency: 20004 usec, configured 20000 usec
+	Flags: HARDWARE HW_MUTE_CTRL HW_VOLUME_CTRL DECIBEL_VOLUME
+	Formats:
+		pcm
+	Properties:
+		alsa.card = "0"
+		alsa.card_name = "HDA Intel PCH"
+		device.description = "Speakers"
+		device.icon_name = "audio-speakers"
+	Active Port: analog-output-speakers
+	Formats:
+		pcm

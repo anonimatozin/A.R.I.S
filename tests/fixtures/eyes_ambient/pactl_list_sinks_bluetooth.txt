@@ -1,0 +1,22 @@
+Sink #61
+	State: RUNNING
+	Name: bluez_sink.AC_12_2F_9B_44_E1.1
+	Description: WH-1000XM4
+	Driver: module-bluez5-discover.c
+	Sample Specification: s16le 2ch 48000Hz
+	Channel Map: front-left,front-right
+	Owner Module: 21
+	Mute: no
+	Volume: front-left: 49152 /  75% / -7.50 dB, front-right: 49152 /  75% / -7.50 dB
+	        balance 0.00
+	Base Volume: 65536 / 100% / 0.00 dB
+	Monitor Source: bluez_sink.AC_12_2F_9B_44_E1.1.monitor
+	Latency: 32000 usec
+	Flags: HARDWARE HW_VOLUME_CTRL DECIBEL_VOLUME LATENCY
+	Properties:
+		device.description = "WH-1000XM4"
+		device.icon_name = "audio-headset"
+		bluez.path = "/org/bluez/hci0/devAC122F9B44E1"
+	Active Port: [out] hdsp
+	Formats:
+		pcm

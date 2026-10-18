@@ -1,0 +1,23 @@
+PipeWire 'pipewire-0' [1.6.2, anonimo@programacao, cookie:4166922656]
+ └─ Clients:
+        33. WirePlumber                         [1.6.2, anonimo@programacao, pid:1659]
+        37. pipewire                            [1.6.2, anonimo@programacao, pid:1662]
+        44. wpctl                               [1.6.2, anonimo@programacao, pid:9141]
+        69. GNOME Shell                         [1.6.2, anonimo@programacao, pid:1908]
+
+Audio
+ ├─ Devices:
+ │      48. GP108 High Definition Audio Controller [alsa]
+ │      49. MK-01                               [alsa]
+ │      50. Áudio interno                      [alsa]
+ │  
+ ├─ Sinks:
+ │  *   47. Áudio interno Estéreo digital (IEC958) [vol: 0.73]
+ │  
+ ├─ Sources:
+ │  *   38. MK-01 Mono                          [vol: 1.00]
+ │      46. Áudio interno Estéreo analógico  [vol: 1.00]
+ │  
+ ├─ Filters:
+ │  
+ └─ Streams:

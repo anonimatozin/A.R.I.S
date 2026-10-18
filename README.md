@@ -116,6 +116,36 @@ erro (error). Com a ARIS ociosa ela também avisa por voz
 | `ESP32_BEACON_INTERVAL` | Intervalo do beacon (s)                      | `3.0`    |
 | `ARIS_WIFI_FALA`        | Aviso falado ao conectar/falhar (se ociosa)  | `1`      |
 
+### Cenas de ambiente nos olhos (Spotify, fone, bateria, sono)
+
+Com o aris_eyes rodando, os olhos também mostram o que está acontecendo
+fora da conversa (`utils/eyes_ambient.py`, thread daemon própria):
+
+| Cena | Quando aparece |
+|---|---|
+| `bateria` | bateria abaixo de 15% e descarregando |
+| `conectado` | o Mini Deck conectou no Wi-Fi (transitória) |
+| `comemorar` | o estado `success` é emitido (transitória) |
+| `spotify` | música tocando no Spotify/MPRIS (+ `prop headphones on` se o fone estiver ligado) |
+| `fone` | fone de ouvido ligado sem música |
+| `dormir` | ARIS ociosa há 15+ min entre 22h e 6h |
+
+A cor da capa da música vira o `accent` do rosto (baixada em thread,
+timeout 3 s, só a cor — título/faixa nunca sai da máquina). Regra de
+precedência: **os estados da ARIS (ouviu/pensando/falando/...) sempre
+passam na frente** — a cena fica guardada e volta sozinha no idle.
+
+| Variável                        | Descrição                                 | Padrão   |
+|---------------------------------|-------------------------------------------|----------|
+| `ARIS_EYES_AMBIENT`             | Kill-switch do módulo inteiro             | `1`      |
+| `ARIS_EYES_AMBIENT_PLAYERS`     | Players MPRIS (separados por vírgula)     | `spotify`|
+| `ARIS_EYES_AMBIENT_INTERVAL`    | Ciclo de reconciliação (s)                | `3`      |
+| `ARIS_EYES_AMBIENT_IDLE_DORMIR` | Minutos de ociosidade p/ scene `dormir`   | `15`     |
+
+Música usa `playerctl` (preferido) ou `busctl`/`dbus-send` (MPRIS direto);
+fone usa `pactl` ou `wpctl` (PipeWire). Sem nenhum, o recurso desliga uma
+vez no log. Detalhes e testes: `tests/test_eyes_ambient.py`.
+
 ## Arquitetura
 
 O projeto segue uma arquitetura modular com separação clara de responsabilidades:

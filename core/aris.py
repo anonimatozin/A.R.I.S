@@ -72,7 +72,7 @@ from modules.skills_system import SkillsSystem
 from modules.turbo_mode import TurboMode
 from search.hyper_search import HyperSearch
 from system.analyzer import PersonalAnalyzer
-from utils import eyes_bridge
+from utils import eyes_ambient, eyes_bridge
 from utils.clap_detector import ClapDetector, ClapDetectorConfig
 from utils.logger import Logger
 from utils.terminal import ArisUI, Terminal
@@ -873,6 +873,10 @@ class Aris:
         else:
             self._logger.info("ARIS Eyes: não rodando (./aris_eyes/aris-eyes.sh --mini)")
 
+        # Cenas de ambiente (Spotify/fone/bateria/sono): thread daemon própria
+        # (utils/eyes_ambient.py; desligue com ARIS_EYES_AMBIENT=0)
+        eyes_ambient.iniciar()
+
         # Exibir banner
         self._print_banner()
 
@@ -1345,6 +1349,9 @@ class Aris:
         if event != "wifi_status":
             return
         estado = str(data.get("estado", ""))
+        if estado == "connected":
+            # Mini Deck no ar: scene "conectado" no rosto (utils/eyes_ambient)
+            eyes_ambient.notificar_esp32_conectado()
         resultado = eyes_bridge.set_wifi_face(estado, forcar=(estado == "failed"))
         if resultado != "aplicado" or estado not in ("connected", "failed"):
             return                      # pendente/forçado/inválido: sem fala
@@ -2105,6 +2112,9 @@ class Aris:
         if self._hardware.connected:
             self._hardware.set_state(SystemState.OFFLINE)
             self._hardware.stop()
+
+        # Para o ambiente primeiro (nada de mandar cena no meio do desligamento)
+        eyes_ambient.parar()
 
         # Olhos dormem junto com a ARIS (independe do ESP32)
         eyes_bridge.set_state(SystemState.OFFLINE.value)

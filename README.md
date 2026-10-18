@@ -46,8 +46,7 @@ Aris/
 ├── modules/                # 17 módulos (chat, desktop, scheduler,
 │                           # notifications, safety, ESP32, ...)
 ├── plugins/                # Plugins de terceiros
-├── gateway/                # Gateway HTTP/WebSocket (código vivo;
-│                           # scripts antigos em _manutencao_antiga/)
+├── gateway/                # Gateway HTTP/WebSocket (código vivo)
 ├── utils/                  # Utilitários (logger, terminal, voz)
 ├── firmware/esp32_aris/    # Firmware ESP32 (.ino + credentials.h)
 ├── logs/                   # Arquivos de log

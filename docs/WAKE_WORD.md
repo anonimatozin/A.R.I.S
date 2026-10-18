@@ -56,6 +56,21 @@ re-acorda).
   o `.onnx` e aponte o `ARIS_WAKE_MODEL` para ele. **Não existem modelos
   pré-treinados em português.**
 
+### Coletando as frases (script pronto)
+
+```bash
+python scripts/coletar_wake_word.py               # 30 frases positivas
+python scripts/coletar_wake_word.py --rodadas 50  # mais frases
+python scripts/coletar_wake_word.py --negativas   # fala SEM a wake word
+```
+
+O script mostra a frase na tela e grava pelo microfone (arecord no
+Linux, pyaudio como fallback), salvando `.wav` 16 kHz em
+`treino_wake/` (pasta local, fora do git). Grave num cômodo silencioso
+variando entonação e distância. Falta só você fornecer as horas de áudio
+negativo (rádio/podcast em pt-BR) e rodar o Colab do projeto para
+treinar e exportar o `.onnx`.
+
 ## Eco da própria voz (limitação conhecida)
 
 O microfone escuta o que os caixas de som reproduzem. O openWakeWord tem

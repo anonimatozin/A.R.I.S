@@ -82,3 +82,6 @@ cll1_heartbeat.log
 /test_*.py
 /*.png
 /*.log
+
+# Gravações de treino da wake word (scripts/coletar_wake_word.py)
+/treino_wake/

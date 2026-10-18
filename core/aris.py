@@ -1295,6 +1295,12 @@ class Aris:
         # Timer = atenção: olhos em "alert"
         eyes_bridge.set_state(SystemState.WARNING.value)
 
+        # Comemoração nos olhos (cena "comemorar", transitória): a ARIS
+        # cumpriu o que combinou com o usuário. Se ela estiver ocupada
+        # (falando/pensando) a cena fica guardada e volta no idle — os
+        # estados da ARIS sempre passam na frente.
+        eyes_ambient.notificar_tarefa_ok()
+
     # ── Botão ESP32 callbacks ───────────────────────────────
 
     def _on_button_voice_toggle(self) -> None:

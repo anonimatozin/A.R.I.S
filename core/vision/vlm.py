@@ -153,7 +153,7 @@ class GeminiVision:
 
     def __init__(
         self,
-        model: str = "gemini-3.6-flash",
+        model: str = "gemini-3.8-flash",
         api_key: str = "",
         base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/",
         timeout: float = 30.0,
@@ -233,7 +233,7 @@ class VisionLanguageModel:
                 logger=logger,
             ),
             "google": GeminiVision(
-                model=config.vlm_model or "gemini-3.6-flash",
+                model=config.vlm_model or "gemini-3.8-flash",
                 api_key=os.getenv("GEMINI_API_KEY", ""),
                 timeout=config.vision_timeout,
                 logger=logger,

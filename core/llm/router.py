@@ -86,7 +86,7 @@ def parse_providers_from_env(
 
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     if gemini_key:
-        model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+        model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         providers.append(ProviderConfig(
             name="gemini",
             api_key=gemini_key,

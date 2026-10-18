@@ -7,9 +7,9 @@
 > v2 com cenas/ambiente (`aris_eyes/`, `utils/eyes_bridge.py`,
 > `utils/eyes_ambient.py`); wake word por palavra inteira + motor dedicado
 > (`core/perception/wake_engine.py`, ver `docs/WAKE_WORD.md`); Mini Deck
-> ESP32 com portal Wi-Fi (`firmware/esp32_aris/`); 45 scripts mortos do
-> `gateway/` movidos para `gateway/_manutencao_antiga/`; CI
-> (`.github/workflows/testes.yml`); NLU fast-path com resposta local
+> ESP32 com portal Wi-Fi (`firmware/esp32_aris/`); os 45 scripts mortos do
+> `gateway/` foram removidos (arquivo apagado a pedido do usuário);
+> CI (`.github/workflows/testes.yml`); NLU fast-path com resposta local
 > rápida (decisão mantida). Use o código e os testes como fonte da
 > verdade; este arquivo fica como referência histórica da arquitetura.
 

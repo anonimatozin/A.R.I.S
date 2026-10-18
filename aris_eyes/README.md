@@ -41,6 +41,7 @@ aris_eyes/
 ├── requirements.txt          PySide6
 ├── scripts/install.sh        cria o venv e instala (sem sudo)
 ├── scripts/render_preview.py gera docs/preview.png sem precisar de tela
+├── scripts/render_extras_preview.py gera preview_extras.png e preview_scenes.png (galerias)
 ├── aris_eyes/
 │   ├── app.py                argumentos, instância única, monta tudo
 │   ├── config.py             padrões + ~/.config/aris_eyes/config.json
@@ -51,13 +52,16 @@ aris_eyes/
 │   ├── api.py                interpreta os comandos
 │   ├── tray.py               ícone de bandeja (opcional)
 │   ├── eyes/
-│   │   ├── presets.py        EXPRESSÕES (parâmetros de cada humor)
+│   │   ├── presets.py        EXPRESSÕES (26 humores) + enfeites ligados a cada humor
 │   │   ├── animator.py       SISTEMA DE ANIMAÇÃO (molas, piscar, olhar, fala) — sem Qt
-│   │   └── renderer.py       desenho dos olhos (QPainter)
+│   │   ├── renderer.py       desenho dos olhos (QPainter)
+│   │   ├── props.py          ENFEITES (notas, coração, fone...) — motor sem Qt
+│   │   ├── props_renderer.py desenho dos enfeites (QPainter)
+│   │   └── scenes.py         CENAS prontas (humor + enfeites + duração) — sem Qt
 │   └── ui/
 │       ├── eyes_widget.py    timer + pintura + eventos do mouse
 │       └── window.py         JANELA: tela cheia, miniatura, escondida, arrastar, menu
-└── tests/                    28 testes
+└── tests/                    88 testes
 ```
 
 ## Dependências do sistema
@@ -154,6 +158,53 @@ Comando de cada atalho (troque pelo caminho real da pasta). Sugestões:
 | `Ctrl+Alt+H` | `/caminho/aris_eyes/aris-eyes.sh --send cycle` |
 | `Ctrl+Alt+M` | `/caminho/aris_eyes/aris-eyes.sh --send mini` |
 
+## Expressões, enfeites e cenas (v2)
+
+O menu (botão direito) agora tem três entradas: **Expressão** (os 12 humores clássicos),
+**Mais expressões** (14 novos: apaixonado, piscadinha, orgulhoso, tonto...) e **Cenas**.
+
+**Cena** = humor + enfeites com duração própria (sem tempo ela acaba sozinha e o rosto volta ao normal).
+`scene spotify 10` mostra por 10 s; `scene off` encerra antes.
+
+| Cena | O que aparece |
+|---|---|
+| `spotify` | notas musicais + equalizador |
+| `fone` | fone de ouvido + notas |
+| `dancar` | notas + brilhinhos |
+| `apaixonado` | corações em volta dos olhos que viram coração |
+| `piscadinha` | olho direito vira "^" |
+| `timido` | bochechas rosadas |
+| `chorando` | lágrimas escorrendo |
+| `orgulhoso` | brilhinhos |
+| `comemorar` | confete + olhos estrela |
+| `tonto` | olhos em espiral |
+| `nervoso` | gota de suor |
+| `carregando` | três bolinhas pulando |
+| `conectado` | ondas de sinal (Wi-Fi/ESP32) |
+| `bateria` | bateria fraca piscando |
+| `dormir` / `sono` | "Z z z" (olhos fechados / cansados) |
+| `curioso` | "?" balançando |
+| `alerta` | "!" pulsando |
+
+Comandos novos (também via `./aris-eyes.sh --send "..."` e pela ponte da ARIS):
+
+```bash
+scene <nome> [segundos] | scene off    cena pronta (lista acima)
+prop <nome> on|off [segundos]          enfeite avulso: notes, equalizer, headphones, hearts, zzz,
+                                       sparkles, confetti, tears, sweat, question, exclaim, loading,
+                                       blush, battery, signal, eye_heart, eye_spiral, eye_star, wink
+music <0..1|off>                       volume da música (ritmo dos olhos / equalizador)
+accent <#rrggbb|off>                   cor de destaque das notas/fone/equalizador
+```
+
+Humores novos ligam seus enfeites sozinhos (ex.: `mood apaixonado` → corações). Mudar de humor encerra
+a cena e os enfeites. **Desligar tudo**: `"props_enabled": false` no config.json — os comandos acima
+respondem `erro: ... desativados` e os olhos voltam ao comportamento antigo.
+
+**Como criar um prop novo**: (1) defina a matemática em `eyes/props.py` e some o nome em `PROP_NAMES`;
+(2) desenhe em `eyes/props_renderer.py`; (3) ligue a um humor em `MOOD_PROPS` (`eyes/presets.py`) ou a
+uma cena em `eyes/scenes.py`; (4) teste em `tests/test_props.py` (matemática, sem tela).
+
 ## Configuração (`~/.config/aris_eyes/config.json`)
 
 Criado na primeira execução. Valores inválidos são ignorados com aviso no terminal.
@@ -171,6 +222,7 @@ Criado na primeira execução. Valores inválidos são ignorados com aviso no te
 | `glow` | `true` | brilho em volta dos olhos (desligue em PC fraco) |
 | `blink_min_s`, `blink_max_s` | 2, 6 | intervalo entre piscadas |
 | `saccades`, `breathing` | `true` | olhadas em volta e respiração |
+| `props_enabled` | `true` | enfeites e cenas; `false` = olhos como antes (sem cenas no menu) |
 | `platform` | `auto` | `auto`, `xcb` (X11/XWayland) ou `wayland` |
 | `tray`, `dev_keys` | `true` | bandeja; teclas 1–0 trocam expressão |
 

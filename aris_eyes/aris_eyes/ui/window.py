@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QMenu, QVBoxLayout, QWidget
 
 from ..config import Config
 from ..eyes.presets import MOOD_ORDER
+from ..eyes.scenes import scene_names
 from .eyes_widget import EyesWidget
 
 log = logging.getLogger("aris_eyes.window")
@@ -29,6 +30,7 @@ class EyesWindow(QWidget):
     quit_requested = Signal()
     always_on_top_requested = Signal(bool)
     mood_requested = Signal(str)
+    scene_requested = Signal(str)           # nome da cena pronta (menu "Cenas")
 
     def __init__(self, config: Config):
         super().__init__()
@@ -191,8 +193,16 @@ class EyesWindow(QWidget):
         top.setChecked(self.cfg.always_on_top)
         top.triggered.connect(self.always_on_top_requested.emit)
         moods = menu.addMenu("Expressao")
-        for mood in MOOD_ORDER:
+        _all = list(MOOD_ORDER)
+        for mood in _all[:12]:              # os 12 humores originais (v1)
             moods.addAction(mood.value, lambda m=mood.value: self.mood_requested.emit(m))
+        extras = menu.addMenu("Mais expressoes")
+        for mood in _all[12:]:              # os 14 humores novos (v2)
+            extras.addAction(mood.value, lambda m=mood.value: self.mood_requested.emit(m))
+        if self.cfg.props_enabled:          # cenas so existem com enfeites ligados
+            cenas = menu.addMenu("Cenas")
+            for name in scene_names():
+                cenas.addAction(name, lambda s=name: self.scene_requested.emit(s))
         menu.addSeparator()
         menu.addAction("Sair", self.quit_requested.emit)
         menu.exec(global_pos)

@@ -14,7 +14,10 @@ from PySide6.QtWidgets import QWidget
 from ..config import Config
 from ..eyes.animator import EyeAnimator, Frame, IdleSettings
 from ..eyes.presets import Mood, parse_mood
+from ..eyes.props import PropEngine
+from ..eyes.props_renderer import draw_props
 from ..eyes.renderer import Theme, draw_eyes
+from ..eyes.scenes import SceneController
 
 
 # Diferenca minima (por campo) para valer a pena repintar: ~0,25 unidade de desenho = menos de 1 pixel.
@@ -43,7 +46,13 @@ class EyesWidget(QWidget):
         self.mini_style = False         # True = desenha o "rostinho" arredondado da miniatura
         idle = IdleSettings(config.blink_min_s, config.blink_max_s, config.saccades, config.breathing)
         self.animator = EyeAnimator(idle, parse_mood(config.initial_mood) or Mood.NEUTRAL)
+        self.props = PropEngine()                 # enfeites (fone, notas, coracoes...)
+        self.scenes = SceneController(self.animator, self.props)
+        self.props_enabled = bool(config.props_enabled)  # kill-switch: False = olhos como antes
+        if self.props_enabled:
+            self.scenes.set_mood(self.animator.mood)  # liga os props do humor inicial
         self._frame = self.animator.update(0.0)
+        self._pframe = self.props.update(0.0) if self.props_enabled else None
         self._painted: Optional[Frame] = None     # ultimo quadro realmente pintado
         self._clock = QElapsedTimer()
         self._timer = QTimer(self)
@@ -65,13 +74,18 @@ class EyesWidget(QWidget):
 
     def _tick(self) -> None:
         dt = self._clock.restart() / 1000.0
+        if self.props_enabled:
+            self.scenes.update(dt)
         self._frame = self.animator.update(dt)
-        if self._painted is None or frames_differ(self._frame, self._painted):
+        if self.props_enabled:
+            self._pframe = self.props.update(dt)
+        animating = self.props_enabled and self.props.is_animating
+        if self._painted is None or animating or frames_differ(self._frame, self._painted):
             self.update()
 
     # ------------------------------------------------------------------ atalhos para o animator
     def set_mood(self, mood: Mood) -> None:
-        self.animator.set_mood(mood)
+        self.scenes.set_mood(mood)                # tambem encerra cena e troca os props do humor
 
     def current_mood(self) -> Mood:
         return self.animator.mood
@@ -95,6 +109,8 @@ class EyesWidget(QWidget):
             p.fillRect(self.rect(), self.theme.background)
             area = QRectF(self.rect())
         draw_eyes(p, self._frame, self.theme, area)
+        if self.props_enabled and self._pframe is not None:
+            draw_props(p, self._pframe, self.theme, area, self._frame, self.scenes.accent)
         p.end()
         self._painted = self._frame
 

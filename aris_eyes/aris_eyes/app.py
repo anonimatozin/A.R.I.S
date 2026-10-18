@@ -125,6 +125,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     window.quit_requested.connect(app.quit)
     window.always_on_top_requested.connect(api.set_always_on_top)
     window.mood_requested.connect(api.set_mood)
+    window.scene_requested.connect(lambda name: api.execute(f"scene {name}"))
 
     actions = {
         "toggle_fullscreen": controller.toggle_fullscreen,

@@ -78,6 +78,8 @@ class Config:
     blink_max_s: float = 6.0
     saccades: bool = True                  # olhadinhas aleatorias quando parado
     breathing: bool = True                 # respiracao sutil
+    # --- enfeites e cenas ---
+    props_enabled: bool = True             # False = sem enfeites/cenas (olhos como antes)
     # --- ambiente ---
     platform: str = "auto"                 # auto | xcb (X11/XWayland) | wayland
     tray: bool = True                      # icone na bandeja, se o desktop tiver

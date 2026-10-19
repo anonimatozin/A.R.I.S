@@ -20,6 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QT_QPA_PLATFORM: offscreen
+      # Headless: sem placa de som, o pygame.mixer.init() trava na
+      # enumeração ALSA SEGURANDO a GIL (freeze de 38 min medido no CI —
+      # ver utils/voice_hybrid._garantir_driver_audio_headless). O driver
+      # dummy do SDL inicializa na hora e não muda resultado de teste
+      # algum (mixer.get_init() continua verdadeiro).
+      SDL_AUDIODRIVER: dummy
       # Saída linha a linha: sem isso o stdout block-buffered esconde
       # onde a suíte travou (perdido no SIGKILL do cancelamento).
       PYTHONUNBUFFERED: "1"

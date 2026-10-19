@@ -14,6 +14,7 @@ Seleção automática de microfone por SNR via MicSelector.
 import asyncio
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -65,6 +66,38 @@ def _is_pt_voice(blob: str) -> bool:
     """Detecta voz em português do Brasil a partir de id/nome."""
     text = blob.lower()
     return any(marker in text for marker in _PT_VOICE_MARKERS)
+
+
+def _tem_placa_som_linux() -> bool:
+    """True se o ALSA tem dispositivo (/dev/snd existe) — fatorado p/ teste."""
+    try:
+        return os.path.exists("/dev/snd")
+    except OSError:
+        return False
+
+
+def _garantir_driver_audio_headless() -> None:
+    """Sem placa de som no Linux, força o driver 'dummy' do SDL.
+
+    Por que existe (medido no CI, dump py-spy do hang): em máquina sem
+    ``/dev/snd`` o ``pygame.mixer.init()`` trava DENTRO da enumeração de
+    dispositivos da ALSA SEGURANDO A GIL — o processo inteiro congela
+    (nem o handler de SIGALRM do pytest-timeout rodava: a thread
+    principal morria em ``take_gil`` esperando a GIL para sempre).
+    Com ``SDL_AUDIODRIVER=dummy`` a inicialização retorna na hora e tocar
+    áudio vira no-op silencioso.
+
+    Nunca sobrescreve um ``SDL_AUDIODRIVER`` já definido pelo usuário.
+    Chamar ANTES do primeiro ``pygame.mixer.init()`` (o SDL lê a env na
+    inicialização).
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    if os.environ.get("SDL_AUDIODRIVER"):
+        return
+    if _tem_placa_som_linux():
+        return
+    os.environ["SDL_AUDIODRIVER"] = "dummy"
 
 
 class HybridVoice:
@@ -401,6 +434,7 @@ class HybridVoice:
             import pygame
 
             if not pygame.mixer.get_init():
+                _garantir_driver_audio_headless()
                 pygame.mixer.init()
             pygame.mixer.music.load(path)
             pygame.mixer.music.play()
@@ -565,6 +599,7 @@ class HybridVoice:
         try:
             import pygame
             if not pygame.mixer.get_init():
+                _garantir_driver_audio_headless()
                 pygame.mixer.init()
             pygame.mixer.music.load(caminho)
             pygame.mixer.music.play()

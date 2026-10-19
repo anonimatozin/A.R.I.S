@@ -186,13 +186,25 @@ class OpenWakeWordEngine:
             ) from exc
 
         self._limiar = float(limiar)
-        if model_path:
-            # Modelo próprio treinado para a Áris (.onnx/.tflite).
-            self._modelo = Model(wakeword_models=[model_path])
-        else:
-            # Modelo pré-treinado do openWakeWord (inglês) — só p/ testar o
-            # pipeline end-to-end; o da Áris precisa ser treinado.
-            self._modelo = Model(wake_words=[wake_word_name])
+        try:
+            if model_path:
+                # Modelo próprio treinado para a Áris (.onnx/.tflite).
+                self._modelo = Model(wakeword_models=[model_path])
+            else:
+                # Modelo pré-treinado do openWakeWord (inglês) — só p/ testar
+                # o pipeline end-to-end; o da Áris precisa ser treinado.
+                self._modelo = Model(wake_words=[wake_word_name])
+        except Exception as exc:
+            # Pacote meio-instalado (ex.: `--no-deps` sem o scipy): o import
+            # do Model acima funciona, mas a construção deles explode com
+            # erro interno (AttributeError etc.). Vira o MESMO erro
+            # instrutivo — o chamador (criar_engine) cai no transcript com
+            # aviso em vez de estourar erro cru de terceiros.
+            raise ImportError(
+                "openWakeWord instalado porém inutilizável "
+                f"({type(exc).__name__}: {exc}) — reinstale conforme "
+                "requirements-optional.txt e docs/WAKE_WORD.md."
+            ) from exc
 
     def process(self, frame_pcm16_16k: bytes) -> float:
         try:

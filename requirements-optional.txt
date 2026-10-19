@@ -16,6 +16,11 @@ mediapipe>=0.10
 # STT offline alternativo (utils/voice_hybrid.py, modules/dictation_mode.py)
 vosk>=0.3.45
 
+# TTS offline feminino pt-BR (utils/voice_hybrid._speak_piper) — a voz
+# pt_BR-faber-medium.onnx vai em ~/.local/share/piper/voices/ (baixe em
+# https://huggingface.co/rhasspy/piper-voices — ver docs)
+piper-tts>=1.2
+
 # Wake word dedicada, offline e sem STT antes de acordar
 # (core/perception/wake_engine.py; ligue com ARIS_WAKE_ENGINE=openwakeword).
 # ATENÇÃO (Linux + Python 3.12): o openwakeword declara tflite-runtime, que

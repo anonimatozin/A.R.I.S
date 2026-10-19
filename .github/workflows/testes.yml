@@ -37,10 +37,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Pacotes do sistema (pyaudio/PortAudio)
+      # espeak-ng: voz de fallback offline da Áris — os testes de voz
+      # (pitch feminino pt-br+f3) rodam o binário de verdade.
+      - name: Pacotes do sistema (pyaudio/PortAudio + espeak-ng)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev espeak-ng
 
       - name: Dependências (núcleo + opcionais)
         run: |
@@ -58,6 +60,26 @@ jobs:
           # 30 min na CI; ver timeout= abaixo). Só muda o harness do CI,
           # nenhum arquivo de teste é alterado.
           pip install pytest-timeout
+
+      # Voz piper pt-BR (TTS offline): o binário vem do piper-tts nas
+      # opcionais; o modelo .onnx (~63 MB) vai em cache — sem ele a
+      # descoberta do modelo falha e o synth do piper pula.
+      - name: Voz piper pt-BR (modelo, com cache)
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/piper/voices
+          key: piper-voz-ptBR-faber-medium
+
+      - name: Baixa modelo piper se ausente
+        run: |
+          mkdir -p ~/.local/share/piper/voices
+          if [ ! -f ~/.local/share/piper/voices/pt_BR-faber-medium.onnx ]; then
+            base=https://huggingface.co/rhasspy/piper-voices/resolve/main/pt/pt_BR/faber/medium
+            curl -fsSL -o ~/.local/share/piper/voices/pt_BR-faber-medium.onnx \
+              "$base/pt_BR-faber-medium.onnx"
+            curl -fsSL -o ~/.local/share/piper/voices/pt_BR-faber-medium.onnx.json \
+              "$base/pt_BR-faber-medium.onnx.json"
+          fi
 
       # python -m pytest (e não o atalho `pytest`): sem __init__.py em
       # tests/, só o modo -m põe o cwd no sys.path — é assim que a suíte

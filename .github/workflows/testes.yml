@@ -58,13 +58,40 @@ jobs:
       # roda localmente e sem isso `import aris_agent/core` quebra.
       # -v: loga o NOME de cada teste na hora (sem -v os pontos do modo
       # -q não dizem onde exatamente algo travou).
+      #
+      # Watchdog: a suíte já travou 38 min em test_hud_chat sem que o
+      # --timeout=600 (SIGALRM) disparasse — sinal de thread presa em C
+      # sem devolver a GIL, que impede o handler de rodar. Se parar 15
+      # min, o py-spy despeja as pilhas PYTHON e NATIVAS (ptrace, vê o
+      # C mesmo com a GIL presa) e mata o processo: hang vira falha
+      # visível em vez de segurar o job por horas.
       - name: Suíte raiz
-        run: >
-          python -m pytest -v --timeout=600 --tb=short -p no:cacheprovider
-          --deselect tests/test_integration_nlu.py::TestNLUFastPath::test_conversation_returns_none
-          --deselect tests/test_gmail.py::TestTokenStorage::test_store_and_load_tokens
-          --deselect tests/test_gmail.py::TestTokenStorage::test_load_stored_tokens
-          --deselect tests/test_gmail.py::TestTokenRefresh::test_refresh_on_401
+        run: |
+          trap 'echo "===== saída do pytest ====="; cat /tmp/pytest_ci.txt 2>/dev/null' EXIT
+          python -m pytest -v --timeout=600 --tb=short -p no:cacheprovider \
+            --deselect tests/test_integration_nlu.py::TestNLUFastPath::test_conversation_returns_none \
+            --deselect tests/test_gmail.py::TestTokenStorage::test_store_and_load_tokens \
+            --deselect tests/test_gmail.py::TestTokenStorage::test_load_stored_tokens \
+            --deselect tests/test_gmail.py::TestTokenRefresh::test_refresh_on_401 \
+            > /tmp/pytest_ci.txt 2>&1 &
+          PID=$!
+          START=$SECONDS
+          while kill -0 "$PID" 2>/dev/null; do
+            if [ $((SECONDS - START)) -gt 900 ]; then
+              echo "::warning::SUITE TRAVOU (>15 min parada) — dump py-spy:"
+              pip install -q py-spy || true
+              py-spy dump --pid "$PID" --native 2>/tmp/pyspy_err.txt \
+                || { echo "py-spy --native falhou:"; cat /tmp/pyspy_err.txt
+                     # runner efêmero da Actions (não é a máquina do usuário):
+                     sudo sysctl -w kernel.yama.ptrace_scope=0 >/dev/null 2>&1 || true
+                     py-spy dump --pid "$PID" || true
+                     py-spy dump --pid "$PID" --native || true; }
+              kill -9 "$PID" 2>/dev/null || true
+              break
+            fi
+            sleep 15
+          done
+          wait "$PID"
 
   olhos:
     name: Suíte aris_eyes

@@ -247,14 +247,18 @@ class HybridVoice:
                 return
             try:
                 if self._tts_engine == "edge-tts":
-                    # Streaming por frase: cada frase é sintetizada e falada
-                    # na hora — a primeira frase de uma resposta longa sai
-                    # ~1-2 s antes (antes o texto INTEIRO era sintetizado
-                    # antes de qualquer som) e o stop responde entre frases.
-                    for frase in self._frases_para_falar(text):
-                        if self._stop_requested:
-                            break
-                        self._speak_edge(frase)
+                    # Disjuntor aberto (edge em cooldown): fala o texto
+                    # offline INTEIRO — sem fracionar e sem tentativas de
+                    # rede por frase (cada tentativa custava segundos de
+                    # pausa entre uma frase e a próxima).
+                    if time.monotonic() < self._edge_cooldown_until:
+                        self._speak_offline(text)
+                        return
+                    # Fila contínua: a frase N+1 é sintetizada ENQUANTO a
+                    # frase N toca e entra na fila do pygame (music.queue) —
+                    # primeiro som rápido (~1-2 s) e frases coladas, sem
+                    # buraco de rede entre elas. O stop responde entre frases.
+                    self._speak_edge_fila(text)
                 elif self._tts_engine and hasattr(self._tts_engine, "say"):
                     self._tts_engine.say(text)
                     self._tts_engine.runAndWait()
@@ -301,24 +305,30 @@ class HybridVoice:
                 if attempt == 0:
                     time.sleep(0.3)
 
-        # Falha: alimenta o disjuntor.
+        # Falha: alimenta o disjuntor (compartilhado com a fila contínua).
+        self._abrir_disjuntor_edge(last_error)
+
+        # Nunca cai para voz em inglês: o fallback só fala se houver voz pt-BR.
+        self._speak_offline(text)
+
+    def _abrir_disjuntor_edge(self, last_error: Exception | None) -> None:
+        """Registra uma falha do edge-tts; abre o disjuntor após N seguidas."""
         self._edge_failures += 1
         if self._edge_failures >= self._edge_max_failures:
             self._edge_cooldown_until = time.monotonic() + self._edge_cooldown_s
             if not self._edge_cooldown_logged:
                 mins = self._edge_cooldown_s // 60
+                nome = type(last_error).__name__ if last_error else "?"
                 self._log(
                     "warning",
                     f"edge-tts falhou {self._edge_failures}x seguidas "
-                    f"({type(last_error).__name__}: {last_error}). "
+                    f"({nome}: {last_error}). "
                     f"Disjuntor: pausando edge-tts por {mins} min e usando voz offline.",
                 )
                 self._edge_cooldown_logged = True
         else:
-            self._log("warning", f"edge-tts falhou ({type(last_error).__name__}: {last_error})")
-
-        # Nunca cai para voz em inglês: o fallback só fala se houver voz pt-BR.
-        self._speak_offline(text)
+            nome = type(last_error).__name__ if last_error else "?"
+            self._log("warning", f"edge-tts falhou ({nome}: {last_error})")
 
     def _speak_offline(self, text: str) -> None:
         """Fallback offline: piper → espeak-ng → pyttsx3 (voz pt-BR).
@@ -461,12 +471,20 @@ class HybridVoice:
             _log("warning", f"pyttsx3 indisponível: {exc}")
             return
         try:
+            pt_voices = [
+                v
+                for v in engine.getProperty("voices") or []
+                if _is_pt_voice(f"{getattr(v, 'id', '')} {getattr(v, 'name', '')}")
+            ]
+            # Prefere variante feminina (pt-br+f3, "feminina", "female").
             pt_voice = None
-            for v in engine.getProperty("voices") or []:
-                blob = f"{getattr(v, 'id', '')} {getattr(v, 'name', '')}"
-                if _is_pt_voice(blob):
+            for v in pt_voices:
+                blob = f"{getattr(v, 'id', '')} {getattr(v, 'name', '')}".lower()
+                if "+f" in blob or "feminin" in blob or "female" in blob or "woman" in blob:
                     pt_voice = v.id
                     break
+            if not pt_voice and pt_voices:
+                pt_voice = pt_voices[0].id
             if not pt_voice:
                 _log(
                     "warning",
@@ -537,57 +555,209 @@ class HybridVoice:
         return clean.strip()
 
     async def _edge_tts_speak(self, text: str) -> None:
-        """Gera áudio via edge-tts e reproduz.
+        """Gera áudio via edge-tts e reproduz (uma frase isolada).
+
+        Para falas com várias frases existe _speak_edge_fila (fila
+        contínua, sem buraco de rede entre as frases).
+        """
+        resultado = self._sintetizar_edge_mp3(text, asyncio.get_event_loop())
+        if not resultado:
+            return
+        caminho, eh_cache = resultado
+        try:
+            if self._stop_requested:
+                return
+            self._reproduzir_audio(caminho)
+        finally:
+            if not eh_cache:
+                self._limpar_mp3_tmp(caminho)
+
+    def _sintetizar_edge_mp3(self, text: str, loop) -> tuple[str, bool] | None:
+        """Sintetiza uma frase via edge-tts num mp3, sem reproduzir.
 
         Cache em disco de frases curtas (ARIS_TTS_CACHE=0 desliga): frases
-        já ouvidas tocam direto do cache (~/.cache/aris/tts), sem rede e
-        sem a latência da síntese — "Pronto!", "Aviso!" e companhia saem
+        já ouvidas saem do cache (~/.cache/aris/tts), sem rede e sem a
+        latência da síntese — "Pronto!", "Aviso!" e companhia saem
         instantâneos.
+
+        Returns:
+            (caminho_do_arquivo, eh_cache), ou None se não há o que falar.
         """
         clean = self._clean_for_tts(text)
         if not clean.strip():
-            return
+            return None
 
         voice = os.getenv("ARIS_TTS_VOICE", "pt-BR-FranciscaNeural")
         arquivo_cache = self._arquivo_cache_tts(clean, voice)
         if arquivo_cache and os.path.exists(arquivo_cache):
             self._log("debug", f"TTS cache hit: {clean[:48]!r}")
-            if self._reproduzir_audio(arquivo_cache):
-                return
+            return arquivo_cache, True
 
         # Arquivo único por fala: evita colisão entre instâncias (HUD + ARIS).
         tmp_file = os.path.join(tempfile.gettempdir(), f"aris_speech_{uuid.uuid4().hex}.mp3")
+        communicate = edge_tts.Communicate(text, voice)
+        loop.run_until_complete(communicate.save(tmp_file))
 
-        try:
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(tmp_file)
-
-            if arquivo_cache:
-                try:
-                    import shutil
-                    shutil.copyfile(tmp_file, arquivo_cache)
-                    self._podar_cache_tts(os.path.dirname(arquivo_cache))
-                except OSError:
-                    pass  # cache é conforto, nunca quebra a fala
-
-            if self._stop_requested:
-                return
-
-            self._reproduzir_audio(tmp_file)
-        finally:
-            # Liberar o arquivo (pygame/MCI podem mantê-lo aberto) e limpar
+        if arquivo_cache:
             try:
-                import pygame
-                if pygame.mixer.get_init():
-                    pygame.mixer.music.unload()
-            except Exception:
-                pass
-            for _ in range(5):
-                try:
-                    os.remove(tmp_file)
-                    break
-                except OSError:
-                    time.sleep(0.2)
+                import shutil
+                shutil.copyfile(tmp_file, arquivo_cache)
+                self._podar_cache_tts(os.path.dirname(arquivo_cache))
+            except OSError:
+                pass  # cache é conforto, nunca quebra a fala
+        return tmp_file, False
+
+    def _limpar_mp3_tmp(self, caminho: str) -> None:
+        """Libera o mixer e remove um mp3 temporário (best-effort)."""
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.music.unload()
+        except Exception:
+            pass
+        for _ in range(5):
+            try:
+                os.remove(caminho)
+                return
+            except OSError:
+                time.sleep(0.2)
+
+    def _speak_edge_fila(self, text: str) -> None:
+        """Fala uma resposta com fila contínua de frases (edge-tts).
+
+        Enquanto a frase N reproduz, a frase N+1 já é sintetizada numa
+        thread produtora e entra na fila do pygame (music.queue) — o
+        primeiro som sai rápido e as frases colam sem buraco de rede
+        entre elas. Se o edge falhar no meio, o resto da resposta sai
+        offline, inteiro e contínuo (uma única síntese).
+        """
+        import queue as _queue
+
+        frases = self._frases_para_falar(text)
+        if len(frases) == 1:
+            self._speak_edge(frases[0])
+            return
+
+        pendentes: _queue.Queue = _queue.Queue()
+
+        def _produtor() -> None:
+            """Sintetiza as frases em ordem; sinaliza cada uma no queue."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                for idx, frase in enumerate(frases):
+                    if self._stop_requested:
+                        break
+                    try:
+                        pendentes.put((idx, self._sintetizar_edge_mp3(frase, loop)))
+                    except Exception as exc:
+                        pendentes.put((idx, ("ERRO", exc)))
+            finally:
+                loop.close()
+            pendentes.put((None, None))  # sentinela: produção terminou
+
+        threading.Thread(target=_produtor, daemon=True).start()
+
+        arquivos: list[tuple[str, bool]] = []  # (caminho, eh_cache)
+        try:
+            self._tocar_fila_edge(pendentes, frases, arquivos)
+        finally:
+            for caminho, eh_cache in arquivos:
+                if not eh_cache:
+                    self._limpar_mp3_tmp(caminho)
+
+    def _tocar_fila_edge(self, pendentes, frases: list[str], arquivos: list) -> None:
+        """Player da fila contínua: play da 1ª frase, music.queue das demais."""
+        import queue as _queue
+
+        import pygame
+
+        if not pygame.mixer.get_init():
+            _garantir_driver_audio_headless()
+            pygame.mixer.init()
+
+        # O pygame não expõe get_queue(): o consumo da fila é detectado
+        # quando get_pos() recua (o stream enfileirado reinicia o clock).
+        estado = {"fim_producao": False, "na_fila": False, "pos_pico": 0}
+
+        def _pegar():
+            """Próximo item já sintetizado, sem bloquear (None se não há)."""
+            try:
+                return pendentes.get_nowait()
+            except _queue.Empty:
+                return None
+
+        def _consumir(item, tocando: bool) -> bool:
+            """Consome um item do produtor. True = encerra a fala por aqui."""
+            if item is None or item[0] is None:
+                estado["fim_producao"] = True  # sentinela: produção terminou
+                return False
+            idx, resultado = item
+            if isinstance(resultado, tuple) and resultado and resultado[0] == "ERRO":
+                # Edge quebrou no meio: abre o disjuntor e o RESTO da
+                # resposta sai offline de uma vez (contínuo, sem rede).
+                self._abrir_disjuntor_edge(resultado[1])
+                while pygame.mixer.music.get_busy() and not self._stop_requested:
+                    pygame.time.wait(50)
+                if not self._stop_requested:
+                    resto = " ".join(frases[idx:])
+                    if resto:
+                        self._speak_offline(resto)
+                return True
+            if resultado is None:
+                return True  # frase sem áudio (vazia): encerra
+            caminho, eh_cache = resultado
+            arquivos.append((caminho, eh_cache))
+            if tocando and pygame.mixer.music.get_busy():
+                # Fila: a atual continua e a próxima entra sozinha depois.
+                pygame.mixer.music.queue(caminho)
+                estado["na_fila"] = True
+                estado["pos_pico"] = max(
+                    estado["pos_pico"], pygame.mixer.music.get_pos()
+                )
+            else:
+                pygame.mixer.music.load(caminho)
+                pygame.mixer.music.play()
+                estado["na_fila"] = False
+            return False
+
+        # Primeira frase: aguarda a síntese (rede) e dá play.
+        if _consumir(pendentes.get(), tocando=False) or self._stop_requested:
+            return
+
+        while not self._stop_requested:
+            if not pygame.mixer.music.get_busy():
+                # Nada tocando: pega o próximo já pronto (ou espera).
+                estado["na_fila"] = False
+                estado["pos_pico"] = 0
+                item = _pegar()
+                if item is None:
+                    if estado["fim_producao"]:
+                        return
+                    pygame.time.wait(50)
+                    continue
+                if _consumir(item, tocando=False):
+                    return
+                continue
+
+            pos = pygame.mixer.music.get_pos()
+            if estado["na_fila"]:
+                if pos + 50 < estado["pos_pico"]:
+                    estado["na_fila"] = False  # pygame tocou o enfileirado
+                else:
+                    if pos > estado["pos_pico"]:
+                        estado["pos_pico"] = pos
+                    pygame.time.wait(50)
+                    continue
+
+            # Sem nada na fila: enfileira a próxima já sintetizada — é
+            # isso que elimina o buraco de rede entre as frases.
+            item = _pegar()
+            if item is not None:
+                if _consumir(item, tocando=True):
+                    return
+            else:
+                pygame.time.wait(50)
 
     def _reproduzir_audio(self, caminho: str) -> bool:
         """Reproduz um arquivo de áudio (pygame; fallback Windows MCI).

@@ -71,7 +71,8 @@ def test_all_instances_share_single_speech_lock():
 
 def test_default_tts_voice_is_feminine():
     import inspect
-    src = inspect.getsource(vh.HybridVoice._edge_tts_speak)
+    # A voz default vive em _sintetizar_edge_mp3 (fatorado da síntese).
+    src = inspect.getsource(vh.HybridVoice._sintetizar_edge_mp3)
     assert "pt-BR-FranciscaNeural" in src
     assert "AntonioNeural" not in src
 
